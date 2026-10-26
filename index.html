@@ -11,6 +11,7 @@
 <meta name="apple-mobile-web-app-title" content="Expense Tracker">
 <meta name="theme-color" content="#081649">
 <link rel="manifest" href="manifest.webmanifest">
+<script src="config.js"></script>
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" type="image/png" href="icon-192.png">
 <style>
@@ -308,6 +309,7 @@ svg{display:block}
 .setup .cta{background:#fff;color:#0b1a4f}.setup .cta .arr{background:#0b1a4f;color:#fff}
 .su-err{color:#ffb4ae;font-size:14px;min-height:20px;margin-top:10px}
 .su-ok{font-weight:700;margin:6px 0 14px}
+.su-link{display:block;margin:16px auto 0;color:rgba(255,255,255,.8);font-size:15px;font-weight:600;text-decoration:underline;text-underline-offset:3px}
 .su-step{font-size:14px;opacity:.9;text-align:left;background:rgba(255,255,255,.1);border-radius:16px;padding:12px 14px;margin-top:10px}
 .qr{display:flex;justify-content:center;margin:14px auto 4px;padding:12px;background:#fff;border-radius:20px;width:max-content;color:#0b0d12}
 .loading .lg{width:84px;height:84px;border-radius:26px;display:grid;place-items:center;font-size:40px;font-weight:800;animation:breathe 1.4s ease-in-out infinite}
@@ -493,13 +495,15 @@ const scroller=()=>FRAMED?$('app'):(document.scrollingElement||document.document
 const CFG_K='et_cfg_v1';
 function getCfg(){try{return JSON.parse(localStorage.getItem(CFG_K)||'null')}catch(e){return null}}
 function setCfg(c){try{c?localStorage.setItem(CFG_K,JSON.stringify(c)):localStorage.removeItem(CFG_K)}catch(e){}}
-(function readHash(){try{const h=new URLSearchParams(location.hash.slice(1));const u=h.get('u'),k=h.get('k');if(u&&k)setCfg({url:u,key:k});}catch(e){}})();
-const setupLink=c=>location.origin+location.pathname+'#u='+encodeURIComponent(c.url)+'&k='+encodeURIComponent(c.key);
+// old setup links (#u=…&k=…) still work once, then are removed from the address bar
+(function readHash(){try{const h=new URLSearchParams(location.hash.slice(1));const u=h.get('u'),k=h.get('k');
+  if(u&&k&&!getCfg())setCfg({url:u,key:k});if(u||k)history.replaceState(null,'',location.pathname);}catch(e){}})();
+const apiUrl=()=>(getCfg()||{}).url||window.ET_API_URL||'';              // ET_API_URL comes from config.js
 async function api(fn,args,cfg){
-  cfg=cfg||getCfg();if(!cfg)throw new Error('Not connected to your sheet');
+  cfg=cfg||getCfg();if(!cfg)throw new Error('Not signed in');
   const ctl=new AbortController(),t=setTimeout(()=>ctl.abort(),45000);
   try{
-    const r=await fetch(cfg.url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({key:cfg.key,fn,args}),redirect:'follow',signal:ctl.signal});
+    const r=await fetch(cfg.url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(cfg.token?{token:cfg.token,fn,args}:{key:cfg.key,fn,args}),redirect:'follow',signal:ctl.signal});
     const txt=await r.text();let j;
     try{j=JSON.parse(txt);}catch(e){throw new Error(/<html/i.test(txt)?'Google returned a web page. Check the URL ends in /exec and "Who has access" is Anyone.':'Unexpected reply from Google');}
     if(!j.ok)throw new Error(j.error||'Server error');
@@ -560,7 +564,7 @@ async function load(tab,force){
     if(S.edit){const m=S.rows.find(r=>r.row===S.edit.ref.row);if(m)S.edit.ref=m;else S.edit=null;}
     renderAll();saveCache();S.lastLoad=Date.now();
   }catch(e){const msg=e.message||String(e);
-    if(!hasGAS&&!window.__MOCK__&&/secret key|Not connected/i.test(msg))showSetup(msg);else toast(msg,true);}
+    if(!hasGAS&&!window.__MOCK__&&/secret key|Not signed in|sign in again/i.test(msg))showSetup(msg);else toast(msg,true);}
   finally{S.loading=false;syncUI();$('loading').classList.add('hide');}
 }
 function mostUsed(f){const c={};S.rows.slice(-60).forEach(r=>{if(r[f])c[r[f]]=(c[r[f]]||0)+1;});return Object.keys(c).sort((a,b)=>c[b]-c[a])[0];}
@@ -960,55 +964,90 @@ function renderAll(){renderHome(S.view==='home');renderAdd();renderStats();rende
 $('tabbar').onclick=e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.v==='add'&&!S.edit)openAdd(S.kind);else go(b.dataset.v);};
 $('leftBtn').onclick=()=>{if(S.view==='home'&&!hasGAS&&!window.__MOCK__)openSettings();else go('home');};
 
-/* ---------- setup (first launch) & settings ---------- */
+/* ---------- sign in (username + password) & settings ---------- */
 const isStandalone=()=>navigator.standalone===true||(window.matchMedia&&matchMedia('(display-mode: standalone)').matches);
-function loadQR(){return new Promise((res,rej)=>{if(window.QRCode)return res();const s=document.createElement('script');
-  s.src='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';s.onload=res;s.onerror=()=>rej(new Error('QR code could not load'));document.head.appendChild(s);});}
-async function drawQR(el,text){try{await loadQR();el.innerHTML='';new QRCode(el,{text,width:200,height:200,colorDark:'#081649',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.M});}
-  catch(e){el.textContent=e.message;}}
-function installHelp(){return isStandalone()?'':`<div class="su-step"><b>On your iPhone:</b> open this page in <b>Safari</b> → tap <b>Share</b> → <b>Add to Home Screen</b> → keep <b>Open as Web App</b> on → <b>Add</b>.</div>`;}
-function showSetup(err){
-  const c=getCfg()||{url:'',key:''};
+const ARROW='<span class="arr"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>';
+const deviceName=()=>(/iPhone/.test(navigator.userAgent)?'iPhone':/iPad/.test(navigator.userAgent)?'iPad':/Android/.test(navigator.userAgent)?'Android':/Mac/.test(navigator.userAgent)?'Mac':/Windows/.test(navigator.userAgent)?'Windows PC':'Browser')+(isStandalone()?' app':' browser');
+// sign-in calls go straight to the API URL (no token yet)
+async function authCall(fn,args,url){
+  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({fn,args}),redirect:'follow'})
+    .catch(()=>{throw new Error('Could not reach Google. Check your connection.');});
+  const txt=await r.text();let j;
+  try{j=JSON.parse(txt);}catch(e){throw new Error('Unexpected reply. Check the API address in config.js ends in /exec.');}
+  if(!j.ok)throw new Error(j.error||'Sign-in failed');return j.result;
+}
+function showSetup(err,mode){
+  mode=mode||'login';
+  const url=apiUrl(),needUrl=!window.ET_API_URL;
+  const f=(id,ph,type,extra)=>`<input class="field" id="${id}" placeholder="${ph}" type="${type||'text'}" autocomplete="${extra||'off'}" autocapitalize="off" spellcheck="false" style="margin-top:10px">`;
   $('setup').innerHTML=`<div class="su-card">
     <div class="lg g" style="margin:0 auto 14px;width:72px;height:72px;border-radius:22px;display:grid;place-items:center;font-size:34px;font-weight:800">₹</div>
-    <h2>Connect your sheet</h2><p class="su-p">Paste the Web app URL and the secret key from Apps Script. They're saved only on this device.</p>
-    <input class="field" id="suUrl" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(c.url)}" autocomplete="off" autocapitalize="off" spellcheck="false">
-    <input class="field" id="suKey" placeholder="Secret key" value="${esc(c.key)}" autocomplete="off" autocapitalize="off" spellcheck="false" style="margin-top:10px">
-    <div class="su-err" id="suErr">${err?esc(err):''}</div>
-    <button class="cta" id="suGo"><span>Connect</span><span class="arr"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span></button>
+    <h2>${mode==='create'?'Create your login':'Welcome back'}</h2>
+    <p class="su-p">${mode==='create'?'One-time setup. Enter the secret key from Apps Script once, then choose a username and password.':'Sign in to your Expense Tracker.'}</p>
+    <form id="suForm" autocomplete="on" onsubmit="return false">
+    ${needUrl?`<input class="field" id="suUrl" placeholder="Apps Script URL (…/exec)" value="${esc(url)}" autocomplete="off" autocapitalize="off" spellcheck="false">`:''}
+    ${mode==='create'?f('suKey','Secret key from Apps Script'):''}
+    ${f('suUser','Username','text','username')}
+    ${f('suPass','Password','password',mode==='create'?'new-password':'current-password')}
+    ${mode==='create'?f('suPass2','Confirm password','password','new-password'):''}
+    <div class="su-err" id="suErr">${err&&!/Not signed in/.test(err)?esc(err):''}</div>
+    <button class="cta" id="suGo" type="submit"><span>${mode==='create'?'Create & sign in':'Sign in'}</span>${ARROW}</button>
+    </form>
+    <button class="su-link" id="suSwitch">${mode==='create'?'Already have a login? Sign in':'First time? Create your login'}</button>
     <div id="suDone"></div></div>`;
   $('setup').classList.add('show');$('loading').classList.add('hide');
+  $('suSwitch').onclick=()=>showSetup('',mode==='create'?'login':'create');
   $('suGo').onclick=async()=>{
-    const cfg={url:$('suUrl').value.trim(),key:$('suKey').value.trim()};
-    if(!/^https:\/\/script\.google(usercontent)?\.com\/.+/.test(cfg.url))return $('suErr').textContent='That doesn\'t look like an Apps Script /exec URL.';
-    if(cfg.key.length<16)return $('suErr').textContent='Paste the full secret key.';
-    $('suErr').textContent='';$('suGo').querySelector('span').textContent='Connecting…';
+    const u=needUrl?$('suUrl').value.trim():url,user=$('suUser').value.trim(),pw=$('suPass').value;
+    const say=m=>{$('suErr').textContent=m;};
+    if(!/^https:\/\/script\.google(usercontent)?\.com\/.+/.test(u))return say('Enter your Apps Script /exec URL.');
+    if(!user||!pw)return say('Enter your username and password.');
+    if(mode==='create'&&pw!==$('suPass2').value)return say('Passwords don\'t match.');
+    say('');const lbl=$('suGo').querySelector('span');lbl.textContent=mode==='create'?'Creating…':'Signing in…';
     try{
+      const res=mode==='create'?await authCall('createLogin',[$('suKey').value.trim(),user,pw,deviceName()],u)
+                               :await authCall('login',[user,pw,deviceName()],u);
+      const cfg={url:u,token:res.token,user:res.user};
       const b=await api('getBootstrap',[store.get('ql_tab')||'',true],cfg);
-      setCfg(cfg);history.replaceState(null,'',setupLink(cfg).replace(location.origin,''));
-      applyMeta(b);applyData(b.data);if(!S.account)S.account=mostUsed('account')||(S.accs[0]&&S.accs[0].name)||'';saveCache();renderAll();
-      $('suGo').style.display='none';
-      $('suDone').innerHTML=`<div class="su-ok">✓ Connected to “${esc(b.tab)}” · ${b.data.rows.length} entries</div>
-        ${isStandalone()?'':`<div class="su-step"><b>Open it on your iPhone:</b> scan this with the iPhone Camera.</div><div class="qr" id="suQR"></div>`}
-        ${installHelp()}<button class="cta" id="suOpen" style="margin-top:14px"><span>Open the app</span></button>`;
-      if(!isStandalone())drawQR($('suQR'),setupLink(cfg));
+      setCfg(cfg);
+      applyMeta(b);applyData(b.data);if(!S.account)S.account=mostUsed('account')||(S.accs[0]&&S.accs[0].name)||'';saveCache();renderAll();S.lastLoad=Date.now();
+      if(isStandalone()){$('setup').classList.remove('show');go('home');toast('Signed in as '+res.user);return;}
+      $('suForm').style.display='none';$('suSwitch').style.display='none';
+      $('suDone').innerHTML=`<div class="su-ok">✓ Signed in as ${esc(res.user)} · ${b.data.rows.length} entries</div>
+        <div class="su-step"><b>On your iPhone:</b> open <b>${esc(location.host+location.pathname)}</b> in <b>Safari</b> → <b>Share</b> → <b>Add to Home Screen</b> → keep <b>Open as Web App</b> on → <b>Add</b>. Then sign in once inside the app.</div>
+        <button class="cta" id="suOpen" style="margin-top:14px"><span>Open the app</span></button>`;
       $('suOpen').onclick=()=>{$('setup').classList.remove('show');go('home');};
-    }catch(e){$('suErr').textContent=e.message;$('suGo').querySelector('span').textContent='Connect';}
+    }catch(e){say(e.message);lbl.textContent=mode==='create'?'Create & sign in':'Sign in';}
   };
 }
 function openSettings(){
-  const c=getCfg();
+  const c=getCfg()||{};
   $('sheetPanel').innerHTML=`<div class="grab"></div><div class="ttl">Settings</div>
-    <div class="meta">Connected to “${esc(S.tab||'your sheet')}”<br><span style="font-size:12px;word-break:break-all">${esc(c?c.url.replace(/^https:\/\//,'').slice(0,60)+'…':'')}</span></div>
-    <div class="qr" id="setQR" style="display:none"></div>
+    <div class="meta">${c.user?'Signed in as <b>'+esc(c.user)+'</b> · ':''}“${esc(S.tab||'your sheet')}”</div>
     <div class="acts"><button class="sb" id="sBud">Monthly budgets</button><button class="sb" id="sCards">Card bill dates</button>
-    <button class="sb dark" id="sLink">Show setup QR for another device</button>
-    <button class="sb" id="sEdit">Change URL or key</button><button class="sb red" id="sOut">Disconnect this device</button></div>`;
+    ${c.token?'<button class="sb" id="sPw">Change password</button>':'<button class="sb dark" id="sMake">Switch to username &amp; password</button>'}
+    <button class="sb red" id="sOut">Sign out of this device</button></div>`;
   $('sBud').onclick=()=>openBudgetEditor();$('sCards').onclick=()=>openCardEditor();
-  $('sLink').onclick=()=>{const q=$('setQR');q.style.display='';drawQR(q,setupLink(c));$('sLink').style.display='none';};
-  $('sEdit').onclick=()=>{closeSheet();showSetup();};
-  $('sOut').onclick=()=>{setCfg(null);try{localStorage.removeItem(CK)}catch(e){}history.replaceState(null,'',location.pathname);location.reload();};
+  if($('sMake'))$('sMake').onclick=()=>{closeSheet();showSetup('','create');};
+  if($('sPw'))$('sPw').onclick=()=>openPasswordChange();
+  $('sOut').onclick=async()=>{
+    if(c.token)try{await authCall('logout',[c.token],c.url);}catch(e){}
+    setCfg(null);try{localStorage.removeItem(CK)}catch(e){}location.reload();
+  };
   showSheet();
+}
+function openPasswordChange(){
+  const c=getCfg()||{};
+  $('sheetPanel').innerHTML=`<div class="grab"></div><div class="ttl">Change password</div>
+    <div class="meta">Other devices will be signed out.</div>
+    <input class="field" id="pwOld" type="password" placeholder="Current password" autocomplete="current-password">
+    <input class="field" id="pwNew" type="password" placeholder="New password (6+ characters)" autocomplete="new-password" style="margin-top:10px">
+    <div class="su-err" id="pwErr" style="color:var(--red)"></div>
+    <div class="acts"><button class="sb dark" id="pwSave">Save new password</button></div>`;
+  $('pwSave').onclick=async()=>{
+    try{await authCall('changePassword',[c.token,$('pwOld').value,$('pwNew').value],c.url);closeSheet();toast('Password changed');}
+    catch(e){$('pwErr').textContent=e.message;}
+  };
 }
 $('monthChips').onclick=e=>{const b=e.target.closest('[data-m]');if(!b)return;S.month=b.dataset.m;renderStats();};
 $('histFilter').onclick=e=>{const b=e.target.closest('[data-f]');if(!b)return;S.filter=b.dataset.f==='All'?'':b.dataset.f;renderHist();};
