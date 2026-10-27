@@ -9,7 +9,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Expense Tracker">
-<meta name="theme-color" content="#081649">
+<meta name="theme-color" content="#06301d">
 <link rel="manifest" href="manifest.webmanifest">
 <script src="config.js"></script>
 <link rel="apple-touch-icon" href="icon-180.png">
@@ -315,9 +315,123 @@ svg{display:block}
 .loading .lg{width:84px;height:84px;border-radius:26px;display:grid;place-items:center;font-size:40px;font-weight:800;animation:breathe 1.4s ease-in-out infinite}
 
 @media (prefers-reduced-motion: reduce){*,*::before,*::after{animation:none!important;transition:none!important}.bub{transform:none;opacity:1}}
+/* =====================================================================
+   GREEN & WHITE THEME – green glass background, white glass panels,
+   lime + white accents. One look in both light and dark mode.
+   ===================================================================== */
+:root{
+  --panel:#ffffff; --tile:#eff6f1; --tile2:#e1eee6; --text:#0c2418; --muted:#6a8476; --faint:#bcd2c4; --sep:#e7efea;
+  --primary:#0e4d2f; --on-primary:#ffffff; --green:#16a34a; --red:#e5484d; --blue:#1f8f5a; --lime:#c9f45a;
+  --navy-a:#052a19; --navy-b:#0c4a2c; --navy-c:#1b8a52;
+  --tabbar:rgba(255,255,255,.62); --tabbar-border:rgba(255,255,255,.7);
+  --shadow:0 20px 44px -20px rgba(3,40,22,.55);
+}
+html,html.framed{background:#062e1c}
+body{background:transparent}
+#app,html.framed #app{background:transparent}
+.bgfx{position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background:
+    radial-gradient(55% 35% at 92% 6%,rgba(201,244,90,.30),transparent 62%),
+    radial-gradient(70% 45% at -10% 52%,rgba(120,230,165,.30),transparent 60%),
+    radial-gradient(80% 40% at 60% 108%,rgba(255,255,255,.55),transparent 60%),
+    linear-gradient(168deg,#04281a 0%,#0a4529 30%,#137140 58%,#5dbb86 84%,#d6f1e0 100%)}
+.bgfx::after{content:"";position:absolute;inset:0;opacity:.5;
+  background:repeating-linear-gradient(118deg,rgba(255,255,255,.05) 0 1px,transparent 1px 22px),
+             repeating-linear-gradient(118deg,rgba(255,255,255,.035) 0 2px,transparent 2px 90px)}
+.g{background:linear-gradient(160deg,rgba(255,255,255,.24),rgba(255,255,255,.07));border-color:rgba(255,255,255,.28)}
+.topbar.scrolled{background:rgba(5,40,24,.72)}
+.hero{background:none;border-radius:0;padding-bottom:20px}
+.hero::before{display:none}
+.view.active{padding-bottom:calc(112px + env(safe-area-inset-bottom))}
+.panel{margin:0 12px;max-width:620px;padding:18px 16px 20px;border-radius:32px;
+  background:rgba(255,255,255,.93);-webkit-backdrop-filter:blur(24px) saturate(150%);backdrop-filter:blur(24px) saturate(150%);
+  border:1px solid rgba(255,255,255,.75);box-shadow:var(--shadow)}
+@media (min-width:660px){.panel{margin:0 auto}}
+.item{background:transparent}
+.swipe.open .item,.swipe.dragging .item{background:#fff}
+.bal{font-size:54px}
+.cmp{display:flex;justify-content:center;align-items:center;gap:6px;font-size:14px;font-weight:500;opacity:.92;margin:-2px 0 16px}
+.spark{color:var(--lime);font-size:15px}
+/* hero pill buttons (Transfer / Set Target style) */
+.hero-actions{margin:0 0 6px}
+.act-pill.lime{background:var(--lime);color:#11301f;box-shadow:0 10px 24px -12px rgba(201,244,90,.9)}
+.act-pill.white{background:#fff;color:#0e4d2f;box-shadow:0 10px 24px -12px rgba(255,255,255,.8)}
+.act-pill.lime:active,.act-pill.white:active{filter:brightness(.95)}
+.act-pill.g{background:linear-gradient(160deg,rgba(255,255,255,.24),rgba(255,255,255,.07));color:#fff}
+.gc.safe{position:relative;margin-top:14px;border-radius:26px;padding:16px 18px;display:flex;flex-direction:column;gap:10px}
+.ss-bar i{background:var(--lime)}
+.search-fake{display:flex;align-items:center;gap:10px;width:100%;padding:13px 16px;border-radius:999px;background:var(--tile);color:var(--muted);font-size:15px;margin-bottom:4px}
+.search-fake svg{width:18px;height:18px}
+.sec-h button{color:var(--blue);font-weight:600}
+.ico{background:var(--tile);color:var(--primary)}
+.item .a{color:var(--text)}
+.chip.on{background:var(--primary);color:#fff}
+.hero .chip{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.22)}
+.hero .chip.on{background:#fff;color:#0e4d2f;border-color:#fff}
+.seg button.on{color:#0e4d2f}
+.field:focus{box-shadow:0 0 0 2px var(--blue)}
+.cta{background:var(--primary)}
+.cta .arr{background:var(--lime);color:#11301f}
+.cta.success{background:var(--green)}
+.setup .cta,.setup .cta span{color:#0e4d2f}.setup .cta .arr{background:#0e4d2f;color:#fff}
+.switch.on{background:var(--lime)}
+.review-banner{background:#fff7e6}
+/* hatched bars like the "rate breakdown" */
+.bar{background:var(--tile2)}
+.bar i{background-color:var(--primary);background-image:repeating-linear-gradient(135deg,rgba(255,255,255,.32) 0 3px,transparent 3px 7px)}
+.daily div{background:var(--primary)}
+.daily div.today{background:#84cc16}
+.daily div.zero{background:var(--tile2)}
+/* tab bar: separate glass circles, active one filled */
+.tabbar{gap:6px;padding:7px;background:rgba(7,52,31,.62);border:1px solid rgba(255,255,255,.28);
+  -webkit-backdrop-filter:blur(26px) saturate(170%);backdrop-filter:blur(26px) saturate(170%)}
+.tabbar button{width:50px;height:50px;border-radius:50%;color:#fff;background:rgba(255,255,255,.12);box-shadow:inset 0 1px 0 rgba(255,255,255,.3)}
+.tabbar button.on{background:#fff;color:#0e4d2f;box-shadow:0 8px 18px -8px rgba(0,0,0,.4)}
+.tabbar button[data-v="add"]{background:var(--lime);color:#11301f}
+.tabbar button[data-v="add"].on{background:#fff}
+/* stats head + pace chart */
+.st-head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;margin-bottom:14px}
+.st-cmp{text-align:right;font-size:13px;opacity:.9;padding-bottom:6px}
+.st-cmp b{display:block;font-size:17px}.st-cmp b.up{color:#ffd28a}.st-cmp b.down{color:var(--lime)}
+.pace{position:relative;border-radius:26px;padding:14px 12px 8px;margin-bottom:14px}
+.pace-h{display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:600;margin:0 4px 6px}
+.lg2{display:flex;align-items:center;gap:6px;font-weight:500;opacity:.85}
+.lg2 i{width:10px;height:10px;border-radius:50%;display:inline-block;margin-left:6px}
+.lg2 .k1{background:var(--lime)}.lg2 .k2{background:rgba(255,255,255,.55)}
+.pace .gl{stroke:rgba(255,255,255,.14);stroke-dasharray:3 4}
+.pace .gt{fill:rgba(255,255,255,.6);font-size:10px}
+.pace .pl{fill:none;stroke:rgba(255,255,255,.55);stroke-width:2;stroke-dasharray:5 4}
+.pace .cl{fill:none;stroke:var(--lime);stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:1}
+.view.active .pace .cl{animation:draw 1.3s var(--ease) .2s forwards}
+@keyframes draw{to{stroke-dashoffset:0}}
+.pace .vl{stroke:rgba(201,244,90,.6);stroke-dasharray:2 3}
+.pace .dot{fill:var(--lime);stroke:#0c3a23;stroke-width:3}
+.pace-tip{position:absolute;top:44px;transform:translateX(-50%);background:rgba(255,255,255,.95);color:#0e4d2f;font-size:12px;font-weight:700;
+  padding:5px 10px;border-radius:999px;white-space:nowrap;box-shadow:0 6px 14px -6px rgba(0,0,0,.4)}
+/* wallet (Total Cards) */
+.wallet{margin-top:4px}
+.wl{position:relative}
+.strip{position:absolute;left:10px;right:10px;height:58px;border-radius:20px 20px 0 0;padding:10px 16px 0;display:flex;justify-content:space-between;align-items:flex-start;
+  font-size:14px;font-weight:600;box-shadow:0 -6px 16px -8px rgba(0,0,0,.25)}
+.strip span{display:flex;align-items:center;gap:8px}.strip svg{width:17px;height:17px}
+.wcard{position:absolute;left:0;right:0;height:170px;border-radius:26px;padding:22px 20px;color:#fff;overflow:hidden;
+  background:radial-gradient(120% 90% at 0% 0%,rgba(255,255,255,.18),transparent 55%),
+             repeating-linear-gradient(45deg,rgba(255,255,255,.04) 0 2px,transparent 2px 6px),
+             linear-gradient(150deg,#1e9a5c,#0f6b3c 55%,#0a4a2a);
+  box-shadow:0 22px 40px -18px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.35);border:1px solid rgba(255,255,255,.25)}
+.wcard::after{content:"";position:absolute;inset:8px;border-radius:20px;border:1.5px dashed rgba(255,255,255,.35);pointer-events:none}
+.wk{font-size:14px;opacity:.85}.wv{font-size:36px;font-weight:700;letter-spacing:-.03em;margin:6px 0 10px}.wc{font-size:13px;opacity:.95}
+.mrow{display:flex;align-items:center;justify-content:space-between;width:100%;text-align:left;padding:14px 16px;margin-top:8px;border-radius:20px;background:var(--tile)}
+.mrow b{display:block;font-size:15px}.mrow small{display:block;color:var(--muted);font-size:13px;margin-top:2px}.mrow i{font-style:normal;font-size:22px;color:var(--muted)}
+.mrow:active{transform:scale(.98)}
+/* sheet + toast */
+.sheet .sb.dark{background:var(--primary)}
+.toast{background:rgba(6,46,28,.88)}
+.loading,.setup{background:linear-gradient(168deg,#04281a 0%,#0a4529 35%,#137140 70%,#5dbb86 100%)}
 </style>
 </head>
 <body>
+<div class="bgfx" aria-hidden="true"></div>
 <div class="loading" id="loading"><div class="lg g">₹</div></div>
 
 <div class="topbar" id="topbar">
@@ -333,21 +447,35 @@ svg{display:block}
 <div id="app">
 <section class="view active" id="v-home">
   <div class="hero">
-    <div class="rise"><div class="bal-k" id="balK">Money left</div><div class="bal num" id="balV">₹0</div></div>
-    <div class="pillc g rise d1" id="balChip"></div>
-    <div class="stack rise d2"><div class="s1"></div><div class="s2"></div>
-      <div class="gc g" id="homeCard"></div></div>
-  </div>
-  <div class="panel">
-    <div class="actions rise d2">
-      <button class="act-pill" data-open="Income"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 7L7 17M7 9v8h8"/></svg>Income</button>
-      <button class="act-pill act-round" data-open="Transfer" aria-label="Transfer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 4v16M8 4L5 7M8 4l3 3M16 20V4M16 20l-3-3M16 20l3-3"/></svg></button>
-      <button class="act-pill" data-open="Expense"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 17L17 7M9 7h8v8"/></svg>Expense</button>
+    <div class="rise"><div class="bal-k" id="balK">Money left</div><div class="bal num" id="balV">₹0</div>
+      <div class="cmp" id="balCmp"></div></div>
+    <div class="actions hero-actions rise d1">
+      <button class="act-pill lime" data-open="Expense"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M7 17L17 7M9 7h8v8"/></svg>Expense</button>
+      <button class="act-pill white" data-open="Income"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M17 7L7 17M7 9v8h8"/></svg>Income</button>
+      <button class="act-pill act-round g" data-open="Transfer" aria-label="Transfer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 4v16M8 4L5 7M8 4l3 3M16 20V4M16 20l-3-3M16 20l3-3"/></svg></button>
     </div>
-    <button class="review-banner rise d3" id="reviewBanner" data-review="1"></button>
-    <div id="billsBox" class="rise d3"></div>
-    <div class="sec-h rise d3"><h3>Recent Transactions</h3><button data-go="hist">View All</button></div>
-    <div id="recentList" class="rise d3"></div>
+    <div class="gc g safe rise d2" id="homeCard"></div>
+  </div>
+  <div class="panel rise d3">
+    <button class="search-fake" data-go="hist" data-focus="1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>Search transactions</button>
+    <button class="review-banner" id="reviewBanner" data-review="1"></button>
+    <div class="sec-h"><h3>Transaction History</h3><button data-go="hist">See all</button></div>
+    <div id="recentList"></div>
+  </div>
+</section>
+
+<!-- CARDS -->
+<section class="view" id="v-cards">
+  <div class="hero">
+    <h2 class="h-title rise">Cards &amp; Accounts</h2>
+    <div class="wallet rise d1" id="wallet"></div>
+  </div>
+  <div class="panel rise d2">
+    <div id="billsBox"></div>
+    <div class="sec-h"><h3>Manage</h3></div>
+    <button class="mrow" id="mCards"><span><b>Card bill dates</b><small>Statement and due day for each card</small></span><i>›</i></button>
+    <button class="mrow" id="mBud"><span><b>Monthly budgets</b><small id="mBudSub">Limits per category</small></span><i>›</i></button>
+    <button class="mrow" data-review="1" id="mRev"><span><b>Review auto-logged</b><small id="mRevSub">Entries without a category</small></span><i>›</i></button>
   </div>
 </section>
 
@@ -385,13 +513,14 @@ svg{display:block}
 <!-- STATS -->
 <section class="view" id="v-stats">
   <div class="hero" style="padding-bottom:18px">
-    <div class="chips scroll rise" id="monthChips" style="margin:0 -20px 6px;padding:2px 20px 6px"></div>
+    <div class="chips scroll rise" id="monthChips" style="margin:0 -20px 10px;padding:2px 20px 6px"></div>
+    <div class="st-head rise d1"><div><div class="bal-k" style="text-align:left">Spent</div><div class="bal num" id="expTotal" style="text-align:left;font-size:44px;margin:2px 0 0">₹0</div></div>
+      <div class="st-cmp" id="stCmp"></div></div>
+    <div class="pace g rise d2" id="pace"></div>
     <div class="bubbles" id="bubbles"></div>
   </div>
   <div class="panel">
-    <div class="sec-h" style="margin-top:6px"><h3>Expenses</h3><button data-go="hist">View All</button></div>
-    <div class="exp-total num" id="expTotal">₹0</div>
-    <div class="sec-h"><h3>Budgets</h3><button id="editBudgets">Edit</button></div>
+    <div class="sec-h" style="margin-top:4px"><h3>Budgets</h3><button id="editBudgets">Edit</button></div>
     <div id="budgets"></div>
     <div class="sec-h"><h3>Top categories</h3></div>
     <div class="tiles" id="tiles"></div>
@@ -419,10 +548,11 @@ svg{display:block}
 </div><!-- /#app -->
 
 <nav class="tabbar" id="tabbar">
-  <button data-v="home" class="on" aria-label="Home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M3 10h18M7 15h3"/></svg></button>
+  <button data-v="home" class="on" aria-label="Home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h5v-6h4v6h5V10"/></svg></button>
+  <button data-v="cards" aria-label="Cards"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-5 9 5"/><path d="M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 20h18"/></svg></button>
   <button data-v="add" aria-label="Add"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
-  <button data-v="stats" aria-label="Stats"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 9 9h-9z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/></svg></button>
-  <button data-v="hist" aria-label="History"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 7h12M8 12h12M8 17h12M4 7h.01M4 12h.01M4 17h.01"/></svg></button>
+  <button data-v="stats" aria-label="Stats"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h18"/><path d="M4 16l5-6 4 3 7-8"/></svg></button>
+  <button data-v="hist" aria-label="History"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M8 7h12M8 12h12M8 17h12M4 7h.01M4 12h.01M4 17h.01"/></svg></button>
 </nav>
 
 <div class="backdrop" id="backdrop"></div>
@@ -435,7 +565,7 @@ svg{display:block}
 const DEFAULT_CATS=[['Housing','Fixed','Expense'],['Grocery','Fixed','Expense'],['Take-out','Fixed','Expense'],['Restaurant','Fixed','Expense'],['Utilities','Fixed','Expense'],['Subscriptions','Fixed','Expense'],['Transportation','Fixed','Expense'],['Household','Fixed','Expense'],['Clothing','Discretionary','Expense'],['Self Care','Discretionary','Expense'],['Travel, Entertainment','Discretionary','Expense'],['Big Purchases','Discretionary','Expense'],['Gift','Giving','Expense'],['Charity','Giving','Expense'],['Paycheck','Active Income','Income'],['Investment Income','Passive Income','Income'],['Transfer','Transfer','Transfer']].map(c=>({name:c[0],group:c[1],type:c[2]}));
 const DEFAULT_ACCS=['Cash','Kiwi','Millenia','OneCard','Checking','Pixel','Tiger'].map(n=>({name:n}));
 const KINDS=['Expense','Income','Transfer'];
-const VIEWS=['home','add','stats','hist'];
+const VIEWS=['home','cards','add','stats','hist'];
 
 /* ---------- icons ---------- */
 const IC={
@@ -534,7 +664,7 @@ function enqueue(fn){QN++;syncUI();const p=Q.then(fn);Q=p.catch(()=>{}).then(()=
 function syncUI(){$('refreshBtn').classList.toggle('spin',QN>0||!!S.loading);}
 const CK='et_cache_v1';
 function saveCache(){try{localStorage.setItem(CK,JSON.stringify({tabs:S.tabs,tab:S.tab,url:S.url,cats:S.cats,accs:S.accs,summary:S.summary,
-  settings:S.settings,fixed:S.fixed,cards:S.cards,
+  settings:S.settings,fixed:S.fixed,cards:S.cards,prev:S.prev,
   rows:S.rows.filter(r=>r.row&&!r.pending).map(r=>({row:r.row,date:r.date,desc:r.saved.desc,category:r.category,amount:r.saved.amount,account:r.account,group:r.group||'',remarks:r.remarks||''}))}));}catch(e){}}
 function fromCache(){try{const c=JSON.parse(localStorage.getItem(CK)||'null');if(!c||!c.rows)return false;
   const want=store.get('ql_tab');if(want&&c.tab!==want)return false;
@@ -542,7 +672,7 @@ function fromCache(){try{const c=JSON.parse(localStorage.getItem(CK)||'null');if
 function applyMeta(b){
   S.tabs=b.tabs||[];S.tab=b.tab;S.url=b.url;
   if(b.settings)S.settings=b.settings;S.settings=S.settings||{};
-  if(b.fixed)S.fixed=b.fixed;if(b.cards)S.cards=b.cards;S.fixed=S.fixed||[];S.cards=S.cards||[];
+  if(b.fixed)S.fixed=b.fixed;if(b.prev!==undefined)S.prev=b.prev;if(b.cards)S.cards=b.cards;S.fixed=S.fixed||[];S.cards=S.cards||[];
   const cats=b.cats||(b.setup&&b.setup.categories),accs=b.accs||(b.setup&&b.setup.accounts);
   S.cats=cats&&cats.length?cats:DEFAULT_CATS;S.accs=accs&&accs.length?accs:DEFAULT_ACCS;
   $('tabSel').innerHTML=S.tabs.map(t=>`<option ${t===S.tab?'selected':''}>${esc(t)}</option>`).join('');
@@ -582,6 +712,60 @@ function rowHTML(r,swipe){const t=typeOf(r.category);
   return `<div class="swipe" data-id="${r._id}">${swipe?`<button class="swipe-del" data-del="${r._id}">Delete</button>`:''}${inner}</div>`;}
 const sorted=list=>list.slice().sort((a,b)=>b.date.localeCompare(a.date)||(b.row||1e9)-(a.row||1e9)||b._id-a._id);
 
+/* ---------- vs last month ---------- */
+const prevYM=ym=>{const[y,m]=ym.split('-').map(Number);const d=new Date(y,m-2,1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');};
+function prevMTD(day){const p=S.prev;if(!p||!p.daily||!(p.total>0))return null;return p.daily.slice(0,day).reduce((a,b)=>a+b,0);}
+// "₹1,632 less than this time last month" (pct=true → "+19.3% more than last month")
+function cmpLine(spent,isCur,pct){
+  if(!isCur)return'';const pm=prevMTD(new Date().getDate());if(pm===null)return'';
+  const diff=spent-pm,more=diff>0;
+  if(pct){const p=pm?Math.abs(diff)/pm*100:100;return `<span class="spark">✦</span> You've spent ${more?'+':'−'}${p.toFixed(1)}% ${more?'more':'less'} than last month`;}
+  return `<span class="spark">✦</span> ${more?'+':'−'}${inr0(Math.abs(diff))} ${more?'more':'less'} than last month`;
+}
+const kfmt=v=>v>=100000?'₹'+(v/100000).toFixed(1)+'L':v>=1000?'₹'+(v/1000).toFixed(v>=10000?0:1)+'k':'₹'+Math.round(v);
+
+/* ---------- CARDS (wallet) ---------- */
+const STRIP=[['#c9f45a','#14301f'],['#ffffff','#14301f'],['#8be3b0','#0f2a1b'],['#2f9e63','#ffffff'],['#e6f7c1','#14301f'],['#4cc38a','#ffffff']];
+function renderCards(){
+  const m=todayISO().slice(0,7),exp=S.rows.filter(r=>r.date.slice(0,7)===m&&typeOf(r.category)==='Expense');
+  const by=group(exp,'account'),accs=Object.entries(by).sort((a,b)=>b[1]-a[1]).slice(0,5),total=sum(exp),n=accs.length,step=38;
+  $('wallet').innerHTML=`<div class="wl" style="height:${n*step+178}px">${accs.map(([a,v],i)=>{const c=STRIP[i%STRIP.length];
+      return `<div class="strip" style="top:${i*step}px;background:${c[0]};color:${c[1]};z-index:${i+1}"><span>${svg(/cash/i.test(a)?'brief':'tag')}${esc(a)}</span><b class="num">${inr(v)}</b></div>`;}).join('')}
+    <div class="wcard" style="top:${n*step}px;z-index:${n+2}"><div class="wk">Total spent · ${monthName(m)}</div>
+      <div class="wv num">${money(total)}</div><div class="wc">${cmpLine(total,true,true)||`<span class="spark">✦</span> ${exp.length} expenses across ${n} account${n===1?'':'s'}`}</div></div></div>`;
+  renderBills();
+  const nb=Object.keys((S.settings&&S.settings.budgets)||{}).length,nr=S.rows.filter(needsReview).length;
+  $('mBudSub').textContent=nb?nb+' categor'+(nb>1?'ies':'y')+' with a limit':'Limits per category';
+  $('mRevSub').textContent=nr?nr+' need'+(nr>1?'':'s')+' a category':'All entries categorised ✓';
+}
+
+/* ---------- pace chart (cumulative this month vs last month) ---------- */
+function renderPace(exp,ym){
+  const el=$('pace');const[y,m]=ym.split('-').map(Number),dim=new Date(y,m,0).getDate();
+  const isCur=ym===todayISO().slice(0,7),upto=isCur?new Date().getDate():dim;
+  const daily=new Array(dim).fill(0);exp.forEach(r=>{const d=+r.date.slice(8,10);if(d)daily[d-1]+=r.amount;});
+  const cum=[];let s=0;for(let i=0;i<upto;i++){s+=daily[i];cum.push(s);}
+  const pv=(S.prev&&S.prev.month===prevYM(ym)&&S.prev.total>0)?S.prev.daily:null,pc=[];
+  if(pv){let t=0;for(let i=0;i<dim;i++){t+=pv[i]||0;pc.push(t);}}
+  const W=Math.max(260,(el.clientWidth||window.innerWidth-40)-24),H=176,L=40,R=12,T=18,B=24;
+  const maxY=Math.max(1,...cum,...pc)*1.1,x=i=>L+(W-L-R)*(dim>1?i/(dim-1):0),yv=v=>T+(H-T-B)*(1-v/maxY);
+  const line=a=>a.map((v,i)=>(i?'L':'M')+x(i).toFixed(1)+' '+yv(v).toFixed(1)).join(' ');
+  const grid=[0,.5,1].map(f=>{const v=maxY/1.1*f;return `<line x1="${L}" x2="${W-R}" y1="${yv(v)}" y2="${yv(v)}" class="gl"/><text x="4" y="${yv(v)+4}" class="gt">${kfmt(v)}</text>`;}).join('');
+  const xt=[1,Math.round(dim/3),Math.round(2*dim/3),dim].map(d=>`<text x="${x(d-1)}" y="${H-6}" class="gt" text-anchor="middle">${d}</text>`).join('');
+  const last=cum.length-1,lx=last>=0?x(last):L,ly=last>=0?yv(cum[last]):yv(0);
+  el.innerHTML=`<div class="pace-h"><span>Spending pace</span><span class="lg2"><i class="k1"></i>This month${pc.length?'<i class="k2"></i>Last month':''}</span></div>
+   <svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}">
+    <defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="rgba(201,244,90,.45)" stroke-width="2"/></pattern>
+      <linearGradient id="pg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c9f45a" stop-opacity=".35"/><stop offset="1" stop-color="#c9f45a" stop-opacity="0"/></linearGradient></defs>
+    ${grid}${xt}
+    ${pc.length?`<path d="${line(pc)}" class="pl"/>`:''}
+    ${cum.length>1?`<path d="${line(cum)} L${lx} ${yv(0)} L${x(0)} ${yv(0)} Z" fill="url(#pg)"/><path d="${line(cum)} L${lx} ${yv(0)} L${x(0)} ${yv(0)} Z" fill="url(#hatch)"/>
+      <path d="${line(cum)}" class="cl" pathLength="1"/>`:''}
+    ${last>=0?`<line x1="${lx}" x2="${lx}" y1="${ly}" y2="${yv(0)}" class="vl"/><circle cx="${lx}" cy="${ly}" r="5" class="dot"/>`:''}
+   </svg>
+   ${last>=0?`<div class="pace-tip" style="left:${Math.min(Math.max(lx/W*100,18),82)}%">${kfmt(cum[last])} by day ${upto}</div>`:''}`;
+}
+
 /* ---------- HOME ---------- */
 function renderHome(animate){
   const m=curMonth(),rows=S.rows.filter(r=>r.date.slice(0,7)===m),exp=rows.filter(r=>typeOf(r.category)==='Expense');
@@ -593,8 +777,7 @@ function renderHome(animate){
   $('balK').textContent=showLeft?'Money left':'Spent in '+monthName(m);
   const target=showLeft?leftV:spent,el=$('balV');
   if(animate)countUp(el,target,v=>money(v,target<0?'−':''));else el.innerHTML=money(target,target<0?'−':'');
-  $('balChip').innerHTML=showLeft?`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M7 17L17 7M9 7h8v8"/></svg>${inr0(spent)} spent in ${MONTHS[mo-1]}`
-    :`${exp.length} expenses this month`;
+  $('balCmp').innerHTML=cmpLine(spent,isCur)||`<span class="spark">✦</span> ${inr0(spent)} spent in ${MONTHS[mo-1]}`;
   const dim=new Date(y,mo,0).getDate(),daysLeft=isCur?dim-new Date().getDate()+1:0;
   if(showLeft&&isCur){
     // Safe to spend today = (money left + what you've already spent today) ÷ days left including today
@@ -603,7 +786,7 @@ function renderHome(animate){
     $('homeCard').innerHTML=`<div class="row"><span>SAFE TO SPEND TODAY</span><span>${daysLeft} day${daysLeft>1?'s':''} left</span></div>
       <div><div class="big num" style="${over?'color:#ffb4ae':''}">${over?money(-remain,'−')+' <span style="font-size:15px;opacity:.8">over</span>':money(remain)}</div>
         <div class="ss-bar"><i style="width:${pct}%;${over?'background:#ff6b6b':pct>80?'background:#fbbf24':''}"></i></div></div>
-      <div class="row"><span>${inr0(todaySpent)} spent of ${inr0(allowance)} today</span><span class="tag">INR</span></div>`;
+      <div class="row"><span>${inr0(todaySpent)} spent of ${inr0(allowance)} today</span><span>${inr0(spent)} this month</span></div>`;
   }else{
     $('homeCard').innerHTML=`<div class="row"><span>•••• ${esc(mostUsed('account')||'Ledger')}</span><span>${String(mo).padStart(2,'0')} / ${String(y).slice(2)}</span></div>
       <div><div class="row" style="opacity:.7">Today</div><div class="big num">${money(todaySpent)}</div></div>
@@ -642,7 +825,8 @@ document.addEventListener('click',e=>{
   if(f){const ym=todayISO().slice(0,7),name=f.dataset.fixed,cur=!!(((S.settings.fixedPaid||{})[ym]||{})[name]);
     saveSettingsPatch({fixedPaid:{[ym]:{[name]:!cur}}});return;}
   if(e.target.closest('#editCards,#addCards'))openCardEditor();
-  if(e.target.closest('#editBudgets,#addBudgets'))openBudgetEditor();
+  if(e.target.closest('#editBudgets,#addBudgets,#mBud'))openBudgetEditor();
+  if(e.target.closest('#mCards'))openCardEditor();
 });
 function saveSettingsPatch(patch,reload){
   // apply locally first so it feels instant
@@ -694,7 +878,7 @@ function renderBudgets(exp){
   $('budgets').innerHTML='<div class="tile">'+names.sort((x,y)=>(by[y]||0)/b[y]-(by[x]||0)/b[x]).map(n=>{
     const s=by[n]||0,p=s/b[n],col=p>=1?'var(--red)':p>=.85?'#f59e0b':'var(--green)';
     return `<div class="bud"><div class="t"><span>${svg(iconKey(n))}${esc(n)}</span><span class="num">${inr0(s)} <span style="color:var(--muted);font-weight:400">/ ${inr0(b[n])}</span></span></div>
-      <div class="bar"><i data-w="${Math.min(100,p*100)}" style="background:${col}"></i></div>
+      <div class="bar"><i data-w="${Math.min(100,p*100)}" style="background-color:${col}"></i></div>
       <div class="bl" style="color:${p>=1?'var(--red)':'var(--muted)'}">${p>=1?'Over by '+inr0(s-b[n]):inr0(b[n]-s)+' left · '+Math.round(p*100)+'%'}</div></div>`;}).join('')+'</div>';
 }
 
@@ -830,6 +1014,10 @@ function renderStats(){
     :'<div class="empty" style="color:rgba(255,255,255,.7)">No expenses this month</div>';
 
   $('expTotal').innerHTML=money(spent);
+  {const isC=S.month===todayISO().slice(0,7),pm=isC?prevMTD(new Date().getDate()):null;
+   $('stCmp').innerHTML=pm!==null?`<b class="${spent>pm?'up':'down'}">${spent>pm?'+':'−'}${inr0(Math.abs(spent-pm))}</b><span>${pm?Math.abs((spent-pm)/pm*100).toFixed(1):'0'}% vs last month</span>`
+     :`<b>${rows.length}</b><span>entries · ${monthName(S.month||todayISO().slice(0,7))}</span>`;}
+  renderPace(exp,S.month||todayISO().slice(0,7));
   renderBudgets(exp);
   $('tiles').innerHTML=byCat.slice(0,4).map(([c,v])=>`<div class="tile"><div class="tt"><span>${esc(c)}</span>${svg(iconKey(c))}</div><div class="tv num">${money(v)}</div></div>`).join('');
   const [y,m]=(S.month||todayISO().slice(0,7)).split('-').map(Number),dim=new Date(y,m,0).getDate(),isCur=S.month===todayISO().slice(0,7);
@@ -897,7 +1085,7 @@ function renderHist(){
     if(dx<-44){s.classList.add('open');it.style.transform='translateX(-92px)';}else{s.classList.remove('open');it.style.transform='';}
     s._swiped=Date.now();});
   document.addEventListener('click',e=>{
-    const g=e.target.closest('[data-go]');if(g){go(g.dataset.go);return;}
+    const g=e.target.closest('[data-go]');if(g){go(g.dataset.go);if(g.dataset.focus)setTimeout(()=>$('search').focus(),350);return;}
     if(e.target.closest('[data-review]')){S.filter='__review';$('search').value='';renderHist();go('hist');return;}
     const o=e.target.closest('[data-open]');if(o){openAdd(o.dataset.open);return;}
     const del=e.target.closest('[data-del]');if(del){const r=byId(+del.dataset.del);if(r)confirmDelete(r);return;}
@@ -958,9 +1146,10 @@ function go(v){
   scroller().scrollTop=0;$('topbar').classList.remove('scrolled');
   if(v==='home')renderHome(true);
   if(v==='stats')renderStats();
+  if(v==='cards')renderCards();
   if(v==='add'&&prev!=='add')renderAdd();
 }
-function renderAll(){renderHome(S.view==='home');renderAdd();renderStats();renderHist();}
+function renderAll(){renderHome(S.view==='home');renderCards();renderAdd();renderStats();renderHist();}
 $('tabbar').onclick=e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.v==='add'&&!S.edit)openAdd(S.kind);else go(b.dataset.v);};
 $('leftBtn').onclick=()=>{if(S.view==='home'&&!hasGAS&&!window.__MOCK__)openSettings();else go('home');};
 
