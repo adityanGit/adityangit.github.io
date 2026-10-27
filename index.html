@@ -1262,7 +1262,16 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden)return;setT
 bindAdd();
 if(!hasGAS&&!window.__MOCK__&&!getCfg()){showSetup();}
 else{fromCache();load();}
-if('serviceWorker' in navigator&&location.protocol==='https:'&&!hasGAS){navigator.serviceWorker.register('sw.js').catch(()=>{});}
+if('serviceWorker' in navigator&&location.protocol==='https:'&&!hasGAS){
+  const hadSW=!!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).then(reg=>{
+    reg.update().catch(()=>{});                                   // check for a new version on every launch
+    document.addEventListener('visibilitychange',()=>{if(!document.hidden)reg.update().catch(()=>{});});
+  }).catch(()=>{});
+  // a new version took over → reload once so you see it straight away
+  let reloaded=false;
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{if(hadSW&&!reloaded&&!QN){reloaded=true;location.reload();}});
+}
 })();
 </script>
 </body>
