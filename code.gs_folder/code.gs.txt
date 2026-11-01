@@ -1,0 +1,1070 @@
+/**
+ * Expense Tracker – mobile expense app for your Google Sheet.
+ * Paste this into Extensions → Apps Script → Code.gs
+ *
+ * Layout this script expects (matches your "Transactions" tab):
+ *   Row 2 = headers, data from row 4
+ *   A = day label (merged per day)   B = Date   D = Description
+ *   E = Category   F = Amount   G = Account   H = Group   I = Remarks   J = Month (formula)
+ *   L / M = summary panel (Starting Amount, Total Money Left, Fixed Money ...)
+ */
+
+const CONFIG = {
+  TRANSACTION_TAB: '',      // leave '' to auto-detect every tab whose B2 = "Date" and D2 = "Description"
+  FIRST_DATA_ROW: 4,
+  COL: { DAY: 1, DATE: 2, DESC: 4, CATEGORY: 5, AMOUNT: 6, ACCOUNT: 7, GROUP: 8, REMARKS: 9 },
+  FORMULA_COLS: [10],       // columns whose formula is copied down when a new row is created (J = Month)
+  SUMMARY_COL: 12,          // L – labels, M – values
+  MERGE_DAY_CELLS: true,    // merge column A for entries on the same day, like your sheet does
+  DATE_FORMAT: 'dd/MM/yyyy'
+};
+
+/* ================= web entry points =================
+ * The app now lives on GitHub Pages and talks to this script through doPost (JSON API).
+ * Deploy as: Execute as "Me", Who has access "Anyone". Every request must carry the secret key
+ * (run setupApiKey() once to create it), so the link alone gives nobody access to your sheet.
+ */
+function doGet(e) {
+  // Old in-Google version still works as a backup, but only with ?key=<your secret key>
+  if (e && e.parameter && checkKey_(e.parameter.key)) {
+    return HtmlService.createHtmlOutputFromFile('Index')
+      .setTitle('Expense Tracker')
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover')
+      .addMetaTag('apple-mobile-web-app-capable', 'yes')
+      .addMetaTag('mobile-web-app-capable', 'yes');
+  }
+  return ContentService.createTextOutput('Expense Tracker API is running.');
+}
+
+function doPost(e) {
+  let out;
+  try {
+    const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+    // sign-in actions (no token yet)
+    const AUTH = { login: login_, createLogin: createLogin_, logout: logout_, changePassword: changePassword_ };
+    if (AUTH[body.fn]) {
+      out = { ok: true, result: AUTH[body.fn](Array.isArray(body.args) ? body.args : []) };
+      return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
+    }
+    // the app sends a sign-in token; the iPhone shortcuts send the secret key
+    if (!checkKey_(body.key) && !checkToken_(body.token)) {
+      throw new Error(body.token ? 'Signed out – please sign in again.' : 'Wrong or missing secret key.');
+    }
+    // iPhone Shortcut: {key, sms:"<message text>"} → reply is a short sentence for the notification
+    if (typeof body.sms === 'string' || typeof body.say === 'string') {
+      let r;
+      try { r = typeof body.sms === 'string' ? addFromSms(body.sms, body.tab || '') : addFromSpeech(body.say, body.tab || ''); }
+      catch (err2) { r = { added: false, message: 'Not logged: ' + ((err2 && err2.message) || err2) }; }
+      return ContentService.createTextOutput(JSON.stringify({ ok: true, message: r.message, result: r }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    const API = {
+      getBootstrap: getBootstrap,
+      addTransaction: addTransaction,
+      updateTransaction: updateTransaction,
+      deleteTransaction: deleteTransaction,
+      saveSettings: saveSettings
+    };
+    const fn = API[body.fn];
+    if (!fn) throw new Error('Unknown action: ' + body.fn);
+    out = { ok: true, result: fn.apply(null, Array.isArray(body.args) ? body.args : []) };
+  } catch (err) {
+    out = { ok: false, error: String((err && err.message) || err) };
+  }
+  return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
+}
+
+function checkKey_(k) {
+  const real = PropertiesService.getScriptProperties().getProperty('API_KEY');
+  return !!real && typeof k === 'string' && k.length === real.length && k === real;
+}
+
+/* ================= username + password sign-in =================
+ * The password is never stored – only a salted, repeatedly-hashed fingerprint.
+ * Signing in gives the device a random token (valid 1 year) which the app sends instead of the key.
+ * 5 wrong passwords lock sign-in for 15 minutes.
+ */
+const TOKEN_DAYS_ = 365;
+
+function sha_(s) { return Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, s, Utilities.Charset.UTF_8)); }
+function hashPw_(pw, salt) { let h = salt + '|' + pw; for (let i = 0; i < 2000; i++) h = sha_(h + salt); return h; }
+function getLogin_() { try { return JSON.parse(PropertiesService.getScriptProperties().getProperty('LOGIN') || 'null'); } catch (e) { return null; } }
+function getTokens_() { try { return JSON.parse(PropertiesService.getScriptProperties().getProperty('TOKENS') || '{}') || {}; } catch (e) { return {}; } }
+function setTokens_(t) { PropertiesService.getScriptProperties().setProperty('TOKENS', JSON.stringify(t)); }
+
+function issueToken_(device) {
+  const token = (Utilities.getUuid() + Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
+  const t = getTokens_(), now = Date.now();
+  Object.keys(t).forEach(function (k) { if (t[k].exp < now) delete t[k]; });                       // drop expired
+  const keys = Object.keys(t).sort(function (a, b) { return t[a].created - t[b].created; });
+  while (keys.length >= 10) delete t[keys.shift()];                                                    // max 10 devices
+  t[sha_(token)] = { created: now, exp: now + TOKEN_DAYS_ * 864e5, device: String(device || '').slice(0, 60) };
+  setTokens_(t);
+  return token;
+}
+
+function checkToken_(token) {
+  if (typeof token !== 'string' || token.length < 40) return false;
+  const rec = getTokens_()[sha_(token)];
+  return !!rec && rec.exp > Date.now();
+}
+
+function tooMany_() {
+  const n = Number(CacheService.getScriptCache().get('login_fail') || 0);
+  if (n >= 5) throw new Error('Too many wrong attempts – try again in 15 minutes.');
+  return n;
+}
+function failed_(n) { CacheService.getScriptCache().put('login_fail', String(n + 1), 900); }
+
+/** args: [username, password, deviceName] → {token, user} */
+function login_(args) {
+  const user = String(args[0] || '').trim().toLowerCase(), pw = String(args[1] || '');
+  const L = getLogin_();
+  if (!L) throw new Error('No login created yet – tap "First time? Create your login".');
+  const n = tooMany_();
+  if (user !== L.user || hashPw_(pw, L.salt) !== L.hash) { failed_(n); throw new Error('Wrong username or password.'); }
+  CacheService.getScriptCache().remove('login_fail');
+  return { token: issueToken_(args[2]), user: L.user };
+}
+
+/** args: [secretKey, username, password, deviceName] – creates (or resets) the login. Needs the secret key once. */
+function createLogin_(args) {
+  const n = tooMany_();
+  if (!checkKey_(String(args[0] || '').trim())) { failed_(n); throw new Error('That secret key is not right (run setupApiKey in Apps Script to see it).'); }
+  const user = String(args[1] || '').trim().toLowerCase(), pw = String(args[2] || '');
+  if (!/^[a-z0-9._-]{3,30}$/.test(user)) throw new Error('Username: 3–30 letters, numbers, . _ or -');
+  if (pw.length < 6) throw new Error('Password must be at least 6 characters.');
+  const salt = Utilities.getUuid();
+  PropertiesService.getScriptProperties().setProperty('LOGIN', JSON.stringify({ user: user, salt: salt, hash: hashPw_(pw, salt) }));
+  setTokens_({});                                   // a new/reset login signs out every other device
+  return { token: issueToken_(args[3]), user: user };
+}
+
+/** args: [token] */
+function logout_(args) {
+  const t = getTokens_(); delete t[sha_(String(args[0] || ''))]; setTokens_(t);
+  return { ok: true };
+}
+
+/** args: [token, oldPassword, newPassword] */
+function changePassword_(args) {
+  if (!checkToken_(args[0])) throw new Error('Signed out – please sign in again.');
+  const L = getLogin_(), n = tooMany_();
+  if (!L || hashPw_(String(args[1] || ''), L.salt) !== L.hash) { failed_(n); throw new Error('Current password is wrong.'); }
+  const pw = String(args[2] || '');
+  if (pw.length < 6) throw new Error('New password must be at least 6 characters.');
+  const salt = Utilities.getUuid();
+  PropertiesService.getScriptProperties().setProperty('LOGIN', JSON.stringify({ user: L.user, salt: salt, hash: hashPw_(pw, salt) }));
+  const t = getTokens_(), keep = sha_(String(args[0])), only = {}; only[keep] = t[keep]; setTokens_(only); // sign out other devices
+  return { ok: true };
+}
+
+/** Run from the editor if you ever lose your phone: signs out every device (login stays the same). */
+function signOutAllDevices() { setTokens_({}); console.log('All devices signed out.'); }
+
+/* ================= auto-logging from bank SMS =================
+ * Edit these to match your cards. `match` is tested against the whole SMS text.
+ */
+const SMS_ACCOUNTS = [
+  { match: /HDFC Bank Card|Card\s+0366/i,          account: 'Millenia' },  // HDFC Millennia credit card
+  { match: /HDFC Bank A\/C|A\/C\s*\*?4725/i,       account: 'Cash' },      // HDFC savings A/C (UPI)
+  { match: /AU Bank Credit Card|x1101/i,           account: 'Kiwi' },      // Kiwi (AU Bank RuPay)
+  { match: /BOBCARD One|OneCard|0547/i,            account: 'OneCard' }    // BOBCARD One
+];
+
+/** Merchant keyword → category (first match wins). Only used when past entries don't already tell us. */
+const SMS_CATEGORY_RULES = [
+  [/swiggy|zomato|tiff(i|e)n|cafe|coffee|bakery|bakes|chai|tea\b|juice|snack|eat|food|kitchen|biryani|pizza|burger|momos|dosa|hotel|bhavan|sagar|darshini/i, 'Take-out'],
+  [/restaurant|dine|dining|bistro|grill|bar\b|pub\b/i, 'Restaurant'],
+  [/zepto|blinkit|instamart|bigbasket|bb ?now|dmart|d-mart|more retail|ratnadeep|reliance fresh|jiomart|grocer|supermarket|super market|provision|kirana|vegetable|fruits|dairy|milk|meat|chicken/i, 'Grocery'],
+  [/redbus|irctc|uber|ola\b|olacabs|rapido|namma ?yatri|metro|bmtc|ksrtc|petrol|fuel|service station|filling station|indian oil|iocl|bharat petroleum|bpcl|hpcl|hp petrol|shell|nayara|parking|fastag|toll/i, 'Transportation'],
+  [/airtel|jio|vodafone|\bvi\b|bsnl|bescom|electricity|power|water board|gas|recharge|broadband|act fibernet/i, 'Utilities'],
+  [/netflix|spotify|apple\.com|itunes|hotstar|jiocinema|prime video|amazon prime|youtube|google play|icloud|chatgpt|openai/i, 'Subscriptions'],
+  [/pvr|inox|cinepolis|bookmyshow|district|airbnb|makemytrip|goibibo|cleartrip|oyo|agoda|booking\.com|indigo|air india|akasa/i, 'Travel, Entertainment'],
+  [/myntra|ajio|zudio|max fashion|lifestyle|pantaloons|westside|h&m|uniqlo|decathlon|trends/i, 'Clothing'],
+  [/salon|saloon|barber|spa\b|pharma|medical|medplus|apollo|1mg|netmeds|clinic|hospital|health|gym|cult/i, 'Self Care'],
+  [/ikea|pepperfry|urban company|laundry|dry clean|hardware|electricals|home ?centre/i, 'Household']
+];
+
+/**
+ * Reads a bank SMS, and if it is a debit, adds it to the sheet.
+ * Returns {added:true,row,...} or {added:false,reason} plus a one-line `message` for the phone notification.
+ */
+function addFromSms(text, tabName) {
+  const p = parseBankSms_(text);
+  if (!p.ok) return { added: false, reason: p.reason, message: 'Not logged: ' + p.reason };
+
+  // ignore the same SMS arriving twice (automation fired twice, etc.)
+  const cache = CacheService.getScriptCache();
+  const fp = 'sms_' + Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5,
+    [p.account, p.amount, p.date, p.merchant].join('|')));
+  if (cache.get(fp)) return { added: false, reason: 'duplicate', message: 'Already logged ₹' + p.amount + ' at ' + p.desc };
+
+  ensureCurrentMonthTab_();
+  const sh = sheetFor_(tabForDate_(p.date, tabName));
+  const category = guessCategory_(sh, p.merchant);
+  const res = addTransaction({
+    date: p.date, desc: p.desc, category: category, amount: p.amount, account: p.account,
+    remarks: 'auto · SMS' + (category ? '' : ' · review')
+  }, sh.getName());
+  cache.put(fp, '1', 21600);
+  return {
+    added: true, row: res.row, amount: p.amount, desc: p.desc, category: category, account: p.account, date: p.date,
+    message: 'Logged ₹' + p.amount + ' · ' + p.desc + ' · ' + (category || 'needs a category') + ' (' + p.account + ')' +
+      budgetNote_(sh, category, p.date)
+  };
+}
+
+/** Pure parser – no sheet access. Exposed for testing with testSmsParser(). */
+function parseBankSms_(raw) {
+  const t = String(raw || '').replace(/\s+/g, ' ').trim();
+  if (!t) return { ok: false, reason: 'empty message' };
+  if (/\bOTP\b|one time password|verification code/i.test(t)) return { ok: false, reason: 'OTP message' };
+  if (/credited|received|refund|reversed|reversal|cashback/i.test(t) && !/\b(spent|sent|debited|paid)\b/i.test(t))
+    return { ok: false, reason: 'not a payment (credit/refund)' };
+
+  const num = s => Number(String(s).replace(/,/g, ''));
+  const today = Utilities.formatDate(new Date(), tz_(), 'yyyy-MM-dd');
+  let amount = null, merchant = '', date = '', m;
+
+  // HDFC credit card: "Spent Rs.2418 On HDFC Bank Card 0366 At Redbus India Private L On 2026-10-22:17:22:55"
+  if ((m = /Spent\s+(?:Rs\.?|INR|₹)\s*([\d,]+(?:\.\d+)?)\s+On\s+.+?Card\s+\w*\d{4}\s+At\s+(.+?)\s+On\s+(\d{4})-(\d{2})-(\d{2})/i.exec(t))) {
+    amount = num(m[1]); merchant = m[2]; date = m[3] + '-' + m[4] + '-' + m[5];
+  }
+  // HDFC UPI: "Sent Rs.182.00 From HDFC Bank A/C *4725 To SWIGGY On 23/10/26 Ref ..."
+  else if ((m = /Sent\s+(?:Rs\.?|INR|₹)\s*([\d,]+(?:\.\d+)?)\s+From\s+.+?A\/C\s*\*?\w*\d{4}\s+To\s+(.+?)\s+On\s+(\d{2})\/(\d{2})\/(\d{2,4})/i.exec(t))) {
+    amount = num(m[1]); merchant = m[2]; date = (m[5].length === 2 ? '20' + m[5] : m[5]) + '-' + m[4] + '-' + m[3];
+  }
+  // AU Bank: "INR 40.00 spent at UPI/S A TIFFEN CENTER on AU Bank Credit Card x1101 23-10-2026 09:05:47 AM"
+  else if ((m = /(?:INR|Rs\.?|₹)\s*([\d,]+(?:\.\d+)?)\s+spent at\s+(.+?)\s+on\s+AU Bank.*?(\d{2})-(\d{2})-(\d{4})/i.exec(t))) {
+    amount = num(m[1]); merchant = m[2]; date = m[5] + '-' + m[4] + '-' + m[3];
+  }
+  // OneCard: "Rs. 725.52 spent at Hamsa Service Station, Bangalo on your BOBCARD One Credit Card xxXX0547"
+  else if ((m = /(?:Rs\.?|INR|₹)\s*([\d,]+(?:\.\d+)?)\s+spent at\s+(.+?)\s+on your\s+.*?Card/i.exec(t))) {
+    amount = num(m[1]); merchant = m[2].replace(/,\s*[^,]*$/, ''); date = today;   // drop the ", City" part
+  }
+  // Generic fallback for other banks: "...Rs 500 debited ... at/to/towards XYZ ..."
+  else if ((m = /(?:Rs\.?|INR|₹)\s*([\d,]+(?:\.\d+)?)/i.exec(t)) && /\b(spent|sent|debited|paid|purchase)\b/i.test(t)) {
+    amount = num(m[1]);
+    const mm = /\b(?:at|to|towards|for)\s+([A-Za-z0-9&@.'\- \/]{2,40}?)(?:\s+(?:on|ref|via|using|avl|bal|upi|from)\b|[.,]|$)/i.exec(t);
+    merchant = mm ? mm[1] : 'Payment';
+    const d1 = /(\d{4})-(\d{2})-(\d{2})/.exec(t), d2 = /(\d{2})[\/-](\d{2})[\/-](\d{2,4})/.exec(t);
+    date = d1 ? d1[1] + '-' + d1[2] + '-' + d1[3] : d2 ? (d2[3].length === 2 ? '20' + d2[3] : d2[3]) + '-' + d2[2] + '-' + d2[1] : today;
+  }
+  if (!(amount > 0)) return { ok: false, reason: 'no amount found' };
+
+  const acc = SMS_ACCOUNTS.filter(function (a) { return a.match.test(t); })[0];
+  if (!acc) return { ok: false, reason: 'unknown card/account – add it to SMS_ACCOUNTS' };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) date = today;
+
+  merchant = merchant.replace(/^(UPI|VPA|POS|IMPS|NEFT)[\/:\- ]+/i, '').replace(/\s+(Private|Pvt)\.?\s*(Ltd|Limited|L)?\.?$/i, '')
+    .replace(/\s+(India|Ltd|Limited|Pvt)\.?$/i, '').replace(/\s+/g, ' ').trim();
+  const desc = titleCase_(merchant || 'Payment').slice(0, 40);
+  return { ok: true, amount: Math.round(amount * 100) / 100, merchant: merchant, desc: desc, date: date, account: acc.account };
+}
+
+/** Category from your own history first (same merchant before), then keyword rules. '' = needs review. */
+function guessCategory_(sh, merchant) {
+  const m = String(merchant || '').toLowerCase().trim();
+  if (!m) return '';
+  const valid = (readSetup_(SpreadsheetApp.getActive()).categories || []).map(function (c) { return c.name; });
+  const ok = function (c) { return c && (!valid.length || valid.indexOf(c) > -1); };
+  try {
+    const word = m.split(/\s+/)[0];
+    const counts = {};
+    readTab_(sh).rows.forEach(function (r) {
+      const d = r.desc.toLowerCase();
+      if (r.category && (d === m || (word.length > 3 && d.indexOf(word) > -1))) counts[r.category] = (counts[r.category] || 0) + 1;
+    });
+    const best = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; })[0];
+    if (ok(best)) return best;
+  } catch (e) { /* fall through to rules */ }
+  for (let i = 0; i < SMS_CATEGORY_RULES.length; i++) {
+    if (SMS_CATEGORY_RULES[i][0].test(m) && ok(SMS_CATEGORY_RULES[i][1])) return SMS_CATEGORY_RULES[i][1];
+  }
+  return '';
+}
+
+function titleCase_(s) {
+  return String(s).toLowerCase().replace(/\b([a-z])/g, function (c) { return c.toUpperCase(); });
+}
+
+/** Run from the editor to check the parser against sample messages (nothing is written to the sheet). */
+function testSmsParser() {
+  [
+    'Spent Rs.2418 On HDFC Bank Card 0366 At Redbus India Private L On 2026-10-22:17:22:55.Not You? To Block+Reissue Call 18002586161/SMS BLOCK CC 0366 to 7308080808',
+    'Sent Rs.182.00 From HDFC Bank A/C *4725 To SWIGGY On 23/10/26 Ref 666200446994 Not You? Call 18002586161/SMS BLOCK UPI to 7308080808',
+    'INR 40.00 spent at UPI/S A TIFFEN CENTER on AU Bank Credit Card x1101 23-10-2026 09:05:47 AM. Not you? Call 180012001500 or SMS PBLOCK 1101 to 5676767',
+    "Tank's full! Rs. 725.52 spent at Hamsa Service Station, Bangalo on your BOBCARD One Credit Card xxXX0547. Reward points added. To dispute, click: https://1crd.in/OneCrd/HQL"
+  ].forEach(function (s) { console.log(JSON.stringify(parseBankSms_(s))); });
+}
+
+/* ================= settings: budgets, card bill dates, fixed-cost checklist =================
+ * Stored in Script Properties (not in the sheet) so the app and the SMS notifications share them.
+ *   budgets   {Category: monthlyLimit}
+ *   cards     {Account: {stmt: statementDay, due: dueDay}}
+ *   fixedPaid {'yyyy-MM': {Rent: true, ...}}
+ */
+function getSettings_() {
+  try { return JSON.parse(PropertiesService.getScriptProperties().getProperty('SETTINGS_V1') || '{}') || {}; }
+  catch (e) { return {}; }
+}
+
+function saveSettings(patch) {
+  return withLock_(function () {
+    const s = getSettings_();
+    patch = patch || {};
+    if (patch.budgets) {
+      s.budgets = s.budgets || {};
+      Object.keys(patch.budgets).forEach(function (k) {
+        const v = Math.round(Number(patch.budgets[k]));
+        if (v > 0) s.budgets[k] = v; else delete s.budgets[k];
+      });
+    }
+    if (patch.cards) {
+      s.cards = s.cards || {};
+      Object.keys(patch.cards).forEach(function (k) {
+        const c = patch.cards[k];
+        const st = c && Math.round(Number(c.stmt)), du = c && Math.round(Number(c.due));
+        if (st >= 1 && st <= 31 && du >= 1 && du <= 31) s.cards[k] = { stmt: st, due: du }; else delete s.cards[k];
+      });
+    }
+    if (patch.fixedPaid) {
+      s.fixedPaid = s.fixedPaid || {};
+      Object.keys(patch.fixedPaid).forEach(function (m) {
+        if (!/^\d{4}-\d{2}$/.test(m)) return;
+        s.fixedPaid[m] = Object.assign(s.fixedPaid[m] || {}, patch.fixedPaid[m]);
+      });
+      Object.keys(s.fixedPaid).sort().slice(0, -3).forEach(function (m) { delete s.fixedPaid[m]; }); // keep 3 months
+    }
+    PropertiesService.getScriptProperties().setProperty('SETTINGS_V1', JSON.stringify(s));
+    return s;
+  });
+}
+
+/** Adds "Take-out: ₹3,810 of ₹4,000 ⚠️" to notifications when that category has a budget. */
+function budgetNote_(sh, category, iso) {
+  try {
+    const b = Number((getSettings_().budgets || {})[category]);
+    if (!category || !(b > 0)) return '';
+    const ym = String(iso).slice(0, 7);
+    const spent = readTab_(sh).rows.filter(function (r) { return r.category === category && r.date.slice(0, 7) === ym; })
+      .reduce(function (s, r) { return s + r.amount; }, 0);
+    const pct = spent / b;
+    return '\n' + category + ': ₹' + inr_(spent) + ' of ₹' + inr_(b) +
+      (pct >= 1 ? ' ⚠️ over by ₹' + inr_(spent - b) : pct >= 0.85 ? ' ⚠️ ' + Math.round(pct * 100) + '% used' : '');
+  } catch (e) { return ''; }
+}
+
+/** Indian digit grouping without relying on Intl: 123456.5 → "1,23,456.50" (decimals only if needed). */
+function inr_(n) {
+  n = Math.round(Number(n) * 100) / 100;
+  const neg = n < 0, a = Math.abs(n), int = Math.floor(a), dec = Math.round((a - int) * 100);
+  let s = String(int), out = s.slice(-3);
+  s = s.slice(0, -3);
+  while (s.length > 2) { out = s.slice(-2) + ',' + out; s = s.slice(0, -2); }
+  if (s) out = s + ',' + out;
+  return (neg ? '-' : '') + out + (dec ? '.' + ('0' + dec).slice(-2) : '');
+}
+
+/** Reads the "Fixed | Amount" table in the L/M panel → [{name, amount}]. */
+function readFixed_(sh) {
+  const out = [];
+  try {
+    const v = sh.getRange(1, CONFIG.SUMMARY_COL, Math.min(40, sh.getMaxRows()), 2).getValues();
+    for (let i = 0; i < v.length; i++) {
+      if (norm_(v[i][0]) === 'fixed' && norm_(v[i][1]) === 'amount') {
+        for (let k = i + 1; k < v.length && String(v[k][0]).trim(); k++) out.push({ name: String(v[k][0]).trim(), amount: toNum_(v[k][1]) });
+        break;
+      }
+    }
+  } catch (e) { /* no table */ }
+  return out;
+}
+
+/* ================= voice / quick add ("log 50 for tea in cash") ================= */
+function addFromSpeech(text, tabName) {
+  ensureCurrentMonthTab_();
+  const ss = SpreadsheetApp.getActive();
+  const setup = readSetup_(ss);
+  const p = parseSpeech_(text, (setup.accounts || []).map(function (a) { return a.name; }),
+    (setup.categories || []).map(function (c) { return c.name; }));
+  if (!p.ok) return { added: false, reason: p.reason, message: 'Not logged: ' + p.reason };
+  const sh = sheetFor_(tabForDate_(p.date, tabName));
+  const category = p.category || guessCategory_(sh, p.desc);
+  const res = addTransaction({ date: p.date, desc: p.desc, category: category, amount: p.amount, account: p.account,
+    remarks: 'voice' + (category ? '' : ' · review') }, sh.getName());
+  return {
+    added: true, row: res.row, amount: p.amount, desc: p.desc, category: category, account: p.account, date: p.date,
+    message: 'Logged ₹' + inr_(p.amount) + ' · ' + p.desc + ' · ' + (category || 'needs a category') + ' (' + p.account + ')' +
+      budgetNote_(sh, category, p.date)
+  };
+}
+
+function parseSpeech_(raw, accounts, categories) {
+  let t = ' ' + String(raw || '').toLowerCase().replace(/₹/g, ' ').replace(/(\d),(\d)/g, '$1$2').replace(/[,!?]/g, ' ').replace(/\s+/g, ' ') + ' ';
+  const m = /(\d+(?:\.\d{1,2})?)/.exec(t);
+  if (!m) return { ok: false, reason: 'no amount heard – say e.g. "50 for tea in cash"' };
+  const amount = Number(m[1]);
+  if (!(amount > 0)) return { ok: false, reason: 'amount must be more than 0' };
+  t = t.replace(m[0], ' ');
+
+  // account (default Cash); a few spoken aliases
+  const alias = { 'millennia': 'Millenia', 'millenium': 'Millenia', 'hdfc card': 'Millenia', 'one card': 'OneCard', 'au card': 'Kiwi' };
+  let account = '';
+  Object.keys(alias).forEach(function (a) { if (!account && t.indexOf(' ' + a + ' ') > -1) { account = alias[a]; t = t.replace(' ' + a + ' ', ' '); } });
+  accounts.slice().sort(function (a, b) { return b.length - a.length; }).forEach(function (name) {
+    const n = name.toLowerCase();
+    if (!account && (t.indexOf(' ' + n + ' ') > -1)) { account = name; t = t.replace(' ' + n + ' ', ' '); }
+  });
+  if (!account) account = accounts.indexOf('Cash') > -1 || !accounts.length ? 'Cash' : accounts[0];
+
+  // date
+  const now = new Date();
+  let date = Utilities.formatDate(now, tz_(), 'yyyy-MM-dd');
+  if (/\byesterday\b/.test(t)) { date = Utilities.formatDate(new Date(now.getTime() - 864e5), tz_(), 'yyyy-MM-dd'); t = t.replace(/\byesterday\b/, ' '); }
+
+  // explicit category spoken ("grocery", "take out", ...)
+  let category = '';
+  categories.slice().sort(function (a, b) { return b.length - a.length; }).forEach(function (c) {
+    const variants = [c.toLowerCase(), c.toLowerCase().replace(/-/g, ' '), c.toLowerCase().replace(/-/g, '')];
+    variants.forEach(function (v) { if (!category && t.indexOf(' ' + v + ' ') > -1) { category = c; t = t.replace(' ' + v + ' ', ' '); } });
+  });
+
+  let desc = t.replace(/\b(hey siri|log|add|added|record|spent|spend|paid|pay|bought|buy|for|on|in|at|to|from|using|via|by|with|rupees?|rs|inr|bucks|the|a|an|cash|card|account|today|and|of)\b/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+  desc = desc ? titleCase_(desc) : (category || 'Expense');
+  return { ok: true, amount: Math.round(amount * 100) / 100, desc: desc.slice(0, 40), account: account, date: date, category: category };
+}
+
+/* ================= monthly tab ("Transactions | Nov 26'") ================= */
+function monthTok_(d) { return Utilities.formatDate(d, tz_(), 'MMM yy'); }   // "Oct 26"
+
+/** The tab for the current month, if its name contains e.g. "Oct 26". */
+function currentMonthTab_(tabs) {
+  const tok = monthTok_(new Date()).toLowerCase();
+  return (tabs || []).filter(function (n) { return n.toLowerCase().indexOf(tok) > -1; })[0] || '';
+}
+
+/** The tab whose name contains the month of `iso` (yyyy-MM-dd), read live from the spreadsheet (never from the cache).
+ *  Falls back to `tabName` when that month has no tab yet. */
+function tabForDate_(iso, tabName) {
+  try {
+    const d = new Date(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, 15);
+    const tok = monthTok_(d).toLowerCase();
+    if (tabName && tabName.toLowerCase().indexOf(tok) > -1) return tabName;
+    const hits = gridSheets_(SpreadsheetApp.getActive()).map(function (sh) { return sh.getName(); })
+      .filter(function (n) { return n.toLowerCase().indexOf(tok) > -1; });
+    if (hits.length) { CacheService.getScriptCache().remove('meta_v2'); return hits[0]; }
+  } catch (e) { /* fall through */ }
+  return tabName;
+}
+
+/** Called before auto-logging: makes sure this month's tab exists (only if your tabs use the "Mon YY" naming). */
+function ensureCurrentMonthTab_() {
+  try {
+    if (currentMonthTab_(findTransactionTabs_(SpreadsheetApp.getActive()))) return;
+    createMonthlyTab();
+  } catch (e) { console.warn('Monthly tab check skipped: ' + e); }
+}
+
+/**
+ * Creates this month's tab by copying last month's (same layout, formulas, Fixed table and Starting Amount),
+ * then clears the entries. Runs automatically on the 1st once installTriggers() has been run.
+ */
+function createMonthlyTab() {
+  const ss = SpreadsheetApp.getActive();
+  const tabs = findTransactionTabs_(ss);
+  const now = new Date();
+  const tok = monthTok_(now);
+  if (currentMonthTab_(tabs)) return 'Already exists: ' + currentMonthTab_(tabs);
+
+  const prevTok = monthTok_(new Date(now.getFullYear(), now.getMonth() - 1, 15));
+  const src = tabs.filter(function (n) { return n.toLowerCase().indexOf(prevTok.toLowerCase()) > -1; })[0];
+  if (!src) return 'No tab named with "' + prevTok + '" to copy from – nothing created.';
+
+  const old = ss.getSheetByName(src);
+  const sh = old.copyTo(ss);
+  sh.setName(src.replace(new RegExp(prevTok, 'i'), tok));
+  ss.setActiveSheet(sh);
+  ss.moveActiveSheet(old.getIndex());            // new month goes just before (left of) last month
+
+  // clear entries (B..I), keep formulas, formatting and dropdowns
+  const F = CONFIG.FIRST_DATA_ROW, C = CONFIG.COL, n = sh.getMaxRows() - F + 1;
+  if (n > 0) {
+    const fms = sh.getRange(F, C.DATE, n, C.REMARKS - C.DATE + 1).getFormulas();
+    for (let j = 0; j <= C.REMARKS - C.DATE; j++) {
+      let hasFormula = false;
+      for (let i = 0; i < n; i++) if (fms[i][j]) { hasFormula = true; break; }
+      if (!hasFormula) sh.getRange(F, C.DATE + j, n, 1).clearContent();
+    }
+    try { const a = sh.getRange(F, C.DAY, n, 1); a.breakApart(); a.clearContent(); } catch (e) { /* merges above row F */ }
+  }
+  // year cell (D1 = 2026) rolls over in January
+  try {
+    const y = sh.getRange(1, 4);
+    const yr = Number(Utilities.formatDate(now, tz_(), 'yyyy'));
+    if (/^\d{4}$/.test(String(y.getValue())) && Number(y.getValue()) !== yr) y.setValue(yr);
+  } catch (e) { }
+  CacheService.getScriptCache().remove('meta_v2');
+  SpreadsheetApp.flush();
+  return 'Created ' + sh.getName();
+}
+
+/* ================= credit card cycles & reminders ================= */
+function isoAdd_(iso, days) {
+  const p = iso.split('-').map(Number);
+  const d = new Date(Date.UTC(p[0], p[1] - 1, p[2]) + days * 864e5);
+  return d.getUTCFullYear() + '-' + ('0' + (d.getUTCMonth() + 1)).slice(-2) + '-' + ('0' + d.getUTCDate()).slice(-2);
+}
+function isoYMD_(y, m, d) {            // m is 1-based and may overflow; day clamped to month length
+  const first = new Date(Date.UTC(y, m - 1, 1));
+  const Y = first.getUTCFullYear(), M = first.getUTCMonth() + 1;
+  const dim = new Date(Date.UTC(Y, M, 0)).getUTCDate();
+  return Y + '-' + ('0' + M).slice(-2) + '-' + ('0' + Math.min(d, dim)).slice(-2);
+}
+function isoDiff_(a, b) { return Math.round((isoToSerial_(b) - isoToSerial_(a))); }  // days from a to b
+
+/**
+ * For each card in settings.cards: spend in the current cycle, last statement amount and its due date.
+ * Reads this month's and the two previous months' tabs (or all tabs if they don't use "Mon YY" names).
+ */
+function cardSummary_(ss, tabs, settings) {
+  const cards = (settings && settings.cards) || {};
+  const names = Object.keys(cards);
+  if (!names.length) return [];
+  const now = new Date();
+  const toks = [0, 1, 2].map(function (k) { return monthTok_(new Date(now.getFullYear(), now.getMonth() - k, 15)).toLowerCase(); });
+  let use = tabs.filter(function (n) { return toks.some(function (t) { return n.toLowerCase().indexOf(t) > -1; }); });
+  if (!use.length) use = tabs;
+  const rows = [];
+  use.forEach(function (n) { const sh = ss.getSheetByName(n); if (sh) readTab_(sh).rows.forEach(function (r) { rows.push(r); }); });
+
+  const today = Utilities.formatDate(now, tz_(), 'yyyy-MM-dd');
+  const ty = Number(today.slice(0, 4)), tm = Number(today.slice(5, 7)), td = Number(today.slice(8, 10));
+  return names.map(function (acc) {
+    const c = cards[acc];
+    const lastStmt = td > c.stmt ? isoYMD_(ty, tm, c.stmt) : isoYMD_(ty, tm - 1, c.stmt);
+    const lsY = Number(lastStmt.slice(0, 4)), lsM = Number(lastStmt.slice(5, 7));
+    const prevStmt = isoYMD_(lsY, lsM - 1, c.stmt);
+    const nextStmt = isoYMD_(lsY, lsM + 1, c.stmt);
+    const dueDate = c.due > c.stmt ? isoYMD_(lsY, lsM, c.due) : isoYMD_(lsY, lsM + 1, c.due);
+    const spend = function (from, to) {     // inclusive ISO range
+      return rows.filter(function (r) { return r.account === acc && !/^transfer$/i.test(r.category) && r.date >= from && r.date <= to; })
+        .reduce(function (s, r) { return s + r.amount; }, 0);
+    };
+    return {
+      account: acc, stmtDay: c.stmt, dueDay: c.due,
+      cycleStart: isoAdd_(lastStmt, 1), nextStatement: nextStmt, spentThisCycle: Math.round(spend(isoAdd_(lastStmt, 1), today) * 100) / 100,
+      lastStatement: lastStmt, billAmount: Math.round(spend(isoAdd_(prevStmt, 1), lastStmt) * 100) / 100,
+      dueDate: dueDate, daysToDue: isoDiff_(today, dueDate)
+    };
+  });
+}
+
+/** Daily (9 am) email: card bills due in 3 days / tomorrow / today, and unpaid fixed costs after the 5th. */
+function dailyReminders() {
+  const ss = SpreadsheetApp.getActive();
+  const tabs = findTransactionTabs_(ss);
+  const settings = getSettings_();
+  const lines = [];
+  cardSummary_(ss, tabs, settings).forEach(function (c) {
+    if (c.billAmount > 0 && [3, 1, 0].indexOf(c.daysToDue) > -1)
+      lines.push(c.account + ' bill ₹' + inr_(c.billAmount) + ' is due ' + (c.daysToDue === 0 ? 'TODAY' : c.daysToDue === 1 ? 'tomorrow' : 'in 3 days') + ' (' + c.dueDate + ').');
+  });
+  const today = Utilities.formatDate(new Date(), tz_(), 'yyyy-MM-dd');
+  if (Number(today.slice(8, 10)) === 5) {
+    const tab = currentMonthTab_(tabs) || tabs[0];
+    const paid = ((settings.fixedPaid || {})[today.slice(0, 7)]) || {};
+    const unpaid = readFixed_(ss.getSheetByName(tab)).filter(function (f) { return !paid[f.name]; });
+    if (unpaid.length) lines.push('Not ticked as paid yet: ' + unpaid.map(function (f) { return f.name + ' ₹' + inr_(f.amount); }).join(', ') + '.');
+  }
+  if (!lines.length) return 'Nothing to remind';
+  MailApp.sendEmail(Session.getEffectiveUser().getEmail(), 'Expense Tracker: ' + lines[0].slice(0, 60), lines.join('\n\n'));
+  return lines.join('\n');
+}
+
+/** RUN ONCE from the editor: new month tab on the 1st (just after midnight) + daily reminder email at 9 am. */
+function installTriggers() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (['createMonthlyTab', 'dailyReminders'].indexOf(t.getHandlerFunction()) > -1) ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('createMonthlyTab').timeBased().onMonthDay(1).atHour(0).create();
+  ScriptApp.newTrigger('dailyReminders').timeBased().everyDays(1).atHour(9).create();
+  console.log('Installed: createMonthlyTab (1st of month, ~00:00) and dailyReminders (daily, ~09:00), time zone ' + Session.getScriptTimeZone());
+}
+
+/** RUN ONCE from the editor: creates your secret key (or shows the existing one) in the Execution log. */
+function setupApiKey() {
+  const props = PropertiesService.getScriptProperties();
+  let k = props.getProperty('API_KEY');
+  if (!k) {
+    k = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
+    props.setProperty('API_KEY', k);
+  }
+  console.log('Your secret key:\n' + k);
+  return k;
+}
+
+/** Run only if your key ever leaks: makes a new key (the phone app will ask for it again). */
+function resetApiKey() {
+  PropertiesService.getScriptProperties().deleteProperty('API_KEY');
+  return setupApiKey();
+}
+
+/* ================= called from the app ================= */
+
+/**
+ * First load. Tabs + Categories/Accounts are cached for 6 hours (they rarely change),
+ * so normally only the transaction rows are read. `force` = true (refresh button) re-reads everything.
+ */
+function getBootstrap(tabName, force) {
+  const ss = SpreadsheetApp.getActive();
+  const cache = CacheService.getScriptCache();
+  let meta = null;
+  if (!force) { try { meta = JSON.parse(cache.get('meta_v2') || 'null'); } catch (e) { meta = null; } }
+  if (meta && meta.tabs && meta.tabs.length && !currentMonthTab_(meta.tabs)) meta = null;   // this month's tab may have been added by hand
+  if (!meta || !meta.tabs || !meta.tabs.length) {
+    const tabs = findTransactionTabs_(ss);
+    if (!tabs.length) throw new Error('No transaction tab found (needs "Date" in B2 and "Description" in D2).');
+    meta = { tabs: tabs, setup: readSetup_(ss), url: ss.getUrl() };
+    try { cache.put('meta_v2', JSON.stringify(meta), 21600); } catch (e) { /* too big to cache – fine */ }
+  }
+  const tab = pickTab_(meta.tabs, tabName);
+  const sh = ss.getSheetByName(tab);
+  if (!sh) { CacheService.getScriptCache().remove('meta_v2'); return getBootstrap(tabName, true); }
+  const settings = getSettings_();
+  return {
+    tabs: meta.tabs, tab: tab, url: meta.url, setup: meta.setup, data: readTab_(sh),
+    latest: currentMonthTab_(meta.tabs) || '',          // this month's tab (app switches to it once)
+    settings: settings,
+    fixed: readFixed_(sh),                              // Rent / EMI / Investments from the Fixed table
+    cards: cardSummary_(ss, meta.tabs, settings),       // spend this cycle + last bill per card
+    prev: prevMonth_(ss, meta.tabs, meta.setup, sh)     // last month's daily spend, for "vs last month"
+  };
+}
+
+/** Last calendar month's expenses per day (from its "Mon YY" tab, else from the current tab). */
+function prevMonth_(ss, tabs, setup, curSh) {
+  try {
+    const now = new Date(), pd = new Date(now.getFullYear(), now.getMonth() - 1, 15);
+    const ym = Utilities.formatDate(pd, tz_(), 'yyyy-MM'), tok = monthTok_(pd).toLowerCase();
+    const types = {};
+    ((setup && setup.categories) || []).forEach(function (c) { types[c.name] = String(c.type || '').toLowerCase(); });
+    const isExp = function (c) { const t = types[c]; return t ? t.indexOf('exp') === 0 : !/transfer|paycheck|income/i.test(c); };
+    const t = tabs.filter(function (n) { return n.toLowerCase().indexOf(tok) > -1; })[0];
+    const rows = readTab_(t ? ss.getSheetByName(t) : curSh).rows;
+    const y = Number(ym.slice(0, 4)), m = Number(ym.slice(5, 7)), dim = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const daily = []; for (let i = 0; i < dim; i++) daily.push(0);
+    let total = 0;
+    rows.forEach(function (r) {
+      if (r.date.slice(0, 7) !== ym || !isExp(r.category)) return;
+      daily[Number(r.date.slice(8, 10)) - 1] += r.amount; total += r.amount;
+    });
+    return { month: ym, total: Math.round(total * 100) / 100, daily: daily.map(function (v) { return Math.round(v * 100) / 100; }) };
+  } catch (e) { return null; }
+}
+
+function getTabData(tabName) {
+  const sh = sheetFor_(tabName);
+  return { tab: sh.getName(), data: readTab_(sh) };
+}
+
+/** Adds one row with as few spreadsheet calls as possible; returns only the new row number + summary panel. */
+function addTransaction(tx, tabName) {
+  return withLock_(function () {
+    const v = validateTx_(tx);
+    const sh = sheetFor_(tabForDate_(v.iso, tabName));   // an entry goes to the tab of its own month
+    const C = CONFIG.COL, F = CONFIG.FIRST_DATA_ROW;
+
+    // one read: B..F from first data row to last row → next empty row + previous row's date
+    const last = sh.getLastRow();
+    let row = F, prevISO = '';
+    if (last >= F) {
+      const vals = sh.getRange(F, C.DATE, last - F + 1, C.AMOUNT - C.DATE + 1).getValues();
+      let lastUsed = -1;
+      for (let i = 0; i < vals.length; i++) {
+        const r = vals[i];
+        if (r[0] !== '' || r[C.DESC - C.DATE] !== '' || r[C.AMOUNT - C.DATE] !== '') lastUsed = i;
+      }
+      row = F + lastUsed + 1;
+      if (lastUsed >= 0) prevISO = toISO_(vals[lastUsed][0]);
+    }
+    ensureRowExists_(sh, row);
+    const prev = row - 1 >= F ? row - 1 : null;
+
+    // formats of previous row (B..F) in one call
+    let dateFmt = CONFIG.DATE_FORMAT, amtFmt = null;
+    if (prev) {
+      const fm = sh.getRange(prev, C.DATE, 1, C.AMOUNT - C.DATE + 1).getNumberFormats()[0];
+      if (/[dy]/i.test(fm[0]) && fm[0] !== '@') dateFmt = fm[0];
+      amtFmt = fm[C.AMOUNT - C.DATE];
+    }
+
+    sh.getRange(row, C.DATE).setValue(v.serial).setNumberFormat(dateFmt);
+    sh.getRange(row, C.DESC, 1, 4).setValues([[v.desc, v.category, v.amount, v.account]]); // D:G
+    if (amtFmt) sh.getRange(row, C.AMOUNT).setNumberFormat(amtFmt);
+    sh.getRange(row, C.REMARKS).setValue(v.remarks);
+
+    // copy formulas (e.g. Month column J) if this row doesn't have them yet
+    if (prev) CONFIG.FORMULA_COLS.forEach(function (col) {
+      const f = sh.getRange(prev, col, 2, 1).getFormulasR1C1();
+      if (!f[1][0] && f[0][0]) sh.getRange(row, col).setFormulaR1C1(f[0][0]);
+    });
+
+    // day label in column A
+    try {
+      if (CONFIG.MERGE_DAY_CELLS && prev && prevISO === v.iso) {
+        const merges = sh.getRange(prev, C.DAY).getMergedRanges();
+        let top = prev;
+        if (merges.length) { top = merges[0].getRow(); merges[0].breakApart(); }
+        sh.getRange(top, C.DAY, row - top + 1, 1).merge();
+      } else {
+        const a = sh.getRange(row, C.DAY);
+        const merges = a.getMergedRanges();
+        if (merges.length) merges[0].breakApart();
+        a.setValue(v.serial).setNumberFormat(CONFIG.DATE_FORMAT);
+      }
+    } catch (e) { /* the day label is cosmetic – never block the save */ }
+
+    return { ok: true, row: row, summary: readSummary_(sh) };
+  });
+}
+
+/** Edit an existing row. `check` = {desc, amount} as the app last saw it, so we never edit the wrong row. */
+function updateTransaction(row, check, tx, tabName) {
+  return withLock_(function () {
+    const sh = sheetFor_(tabName);
+    const oldISO = verifyRow_(sh, row, check);
+    const v = validateTx_(tx);
+    const C = CONFIG.COL;
+    sh.getRange(row, C.DATE).setValue(v.serial);
+    sh.getRange(row, C.DESC, 1, 4).setValues([[v.desc, v.category, v.amount, v.account]]);
+    sh.getRange(row, C.REMARKS).setValue(v.remarks);
+    if (oldISO !== v.iso) safeRebuild_(sh, row);
+    return { ok: true, row: row, summary: readSummary_(sh) };
+  });
+}
+
+/**
+ * Delete a row. Only columns B–I move up (formula columns such as J, and the
+ * summary panel in L/M, stay exactly where they are). Column A day labels are rebuilt.
+ */
+function deleteTransaction(row, check, tabName) {
+  return withLock_(function () {
+    const sh = sheetFor_(tabName);
+    verifyRow_(sh, row, check);
+    shiftUp_(sh, row);
+    safeRebuild_(sh, row);
+    return { ok: true, summary: readSummary_(sh) };
+  });
+}
+
+/**
+ * ONE-TIME FIX – run manually from the Apps Script editor (pick it in the function dropdown → Run).
+ * In every transactions tab whose name contains "Oct", changes any September 2026 date in column B
+ * to the same day in October, then rebuilds the merged day labels in column A from column B.
+ * Check View → Logs (or Execution log) for how many rows were changed.
+ */
+function fixOctoberTabDates() {
+  const ss = SpreadsheetApp.getActive();
+  const F = CONFIG.FIRST_DATA_ROW, C = CONFIG.COL;
+  findTransactionTabs_(ss).filter(function (n) { return /oct/i.test(n); }).forEach(function (name) {
+    const sh = ss.getSheetByName(name);
+    const last = sh.getLastRow();
+    if (last < F) return;
+    const rng = sh.getRange(F, C.DATE, last - F + 1, 1);
+    const vals = rng.getValues(), fms = rng.getFormulas();
+    let changed = 0;
+    const out = vals.map(function (r, i) {
+      if (fms[i][0]) return [fms[i][0]];
+      const iso = toISO_(r[0]);
+      if (/^2026-09-/.test(iso)) { changed++; return [isoToSerial_('2026-10-' + iso.slice(8))]; }
+      return [toCell_(r[0])];
+    });
+    if (changed) rng.setValues(out);
+    rebuildDayLabels_(sh, F);
+    SpreadsheetApp.flush();
+    console.log(name + ': moved ' + changed + ' dates from September to October; day labels rebuilt.');
+  });
+}
+
+/* ================= writing helpers ================= */
+
+function validateTx_(tx) {
+  const desc = String(tx.desc || '').trim();
+  const amount = Math.round(Number(tx.amount) * 100) / 100;
+  const iso = String(tx.date || '');
+  if (!desc) throw new Error('Description is required.');
+  if (!(amount > 0)) throw new Error('Amount must be more than 0.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) throw new Error('Invalid date.');
+  return {
+    iso: iso,
+    serial: isoToSerial_(iso),
+    desc: desc,
+    category: String(tx.category || ''),
+    amount: amount,
+    account: String(tx.account || ''),
+    remarks: String(tx.remarks || '')
+  };
+}
+
+function writeRow_(sh, row, v, prev) {
+  const C = CONFIG.COL;
+  const dateCell = sh.getRange(row, C.DATE);
+  dateCell.setValue(v.serial);
+  const fmt = (prev ? sh.getRange(prev, C.DATE) : dateCell).getNumberFormat();
+  dateCell.setNumberFormat(/[dy]/i.test(fmt) && fmt !== '@' ? fmt : CONFIG.DATE_FORMAT);
+
+  sh.getRange(row, C.DESC).setValue(v.desc);
+  sh.getRange(row, C.CATEGORY).setValue(v.category);
+  const amt = sh.getRange(row, C.AMOUNT);
+  amt.setValue(v.amount);
+  if (prev) amt.setNumberFormat(sh.getRange(prev, C.AMOUNT).getNumberFormat());
+  sh.getRange(row, C.ACCOUNT).setValue(v.account);
+  sh.getRange(row, C.REMARKS).setValue(v.remarks);
+}
+
+function verifyRow_(sh, row, check) {
+  const C = CONFIG.COL;
+  row = Number(row);
+  if (!(row >= CONFIG.FIRST_DATA_ROW)) throw new Error('Invalid row.');
+  const r = sh.getRange(row, C.DATE, 1, C.AMOUNT - C.DATE + 1).getValues()[0];
+  const sameDesc = String(r[C.DESC - C.DATE]).trim() === String(check && check.desc || '').trim();
+  const sameAmt = Math.abs(toNum_(r[C.AMOUNT - C.DATE]) - Number(check && check.amount)) < 0.005;
+  if (!sameDesc || !sameAmt) throw new Error('This entry changed in the sheet. Tap refresh and try again.');
+  return toISO_(r[0]);
+}
+
+/** Move B..I up by one row starting at `row`, leaving formula columns untouched. */
+function shiftUp_(sh, row) {
+  const C = CONFIG.COL;
+  const last = sh.getLastRow();
+  const width = C.REMARKS - C.DATE + 1;
+  const n = last - row + 1;
+  const rng = sh.getRange(row, C.DATE, n, width);
+  const vals = rng.getValues();
+  const fms = rng.getFormulas();
+  for (let j = 0; j < width; j++) {
+    let hasFormula = false;
+    for (let i = 0; i < n; i++) if (fms[i][j]) { hasFormula = true; break; }
+    if (hasFormula) continue;
+    const col = [];
+    for (let i = 1; i < n; i++) col.push([toCell_(vals[i][j])]);
+    col.push(['']);
+    sh.getRange(row, C.DATE + j, n, 1).setValues(col);
+  }
+}
+
+function safeRebuild_(sh, fromRow) {
+  if (!CONFIG.MERGE_DAY_CELLS) return;
+  try { rebuildDayLabels_(sh, fromRow); } catch (e) { console.warn('Day label rebuild skipped: ' + e); }
+}
+
+/** Re-creates the merged date labels in column A from `fromRow` (its whole day group) to the end. */
+function rebuildDayLabels_(sh, fromRow) {
+  const F = CONFIG.FIRST_DATA_ROW, C = CONFIG.COL;
+  const last = sh.getLastRow();
+  if (last < F) return;
+  const iso = sh.getRange(F, C.DATE, last - F + 1, 1).getValues().map(function (r) { return toISO_(r[0]); });
+
+  let i = Math.max(0, Math.min(fromRow, last) - F);
+  if (i > 0) i--;                                   // include the group just above (it may need to absorb rows)
+  while (i > 0 && iso[i] && iso[i - 1] === iso[i]) i--;
+  let start = F + i, end = last;
+
+  // widen to cover any merges that cross the edges
+  sh.getRange(start, C.DAY, end - start + 1, 1).getMergedRanges().forEach(function (m) {
+    start = Math.min(start, m.getRow());
+    end = Math.max(end, m.getLastRow());
+  });
+  start = Math.max(start, F);
+  const area = sh.getRange(start, C.DAY, end - start + 1, 1);
+  area.breakApart();
+
+  const out = [], groups = [];
+  for (let r = start; r <= end; r++) {
+    const d = r <= last ? iso[r - F] : '';
+    const prevD = r > start ? (r - 1 <= last ? iso[r - 1 - F] : '') : null;
+    if (d && d === prevD) { out.push(['']); groups[groups.length - 1].len++; }
+    else { out.push([d ? isoToSerial_(d) : '']); if (d) groups.push({ top: r, len: 1 }); }
+  }
+  area.setValues(out);
+  area.setNumberFormat(CONFIG.DATE_FORMAT);
+  groups.forEach(function (g) { if (g.len > 1) sh.getRange(g.top, C.DAY, g.len, 1).merge(); });
+}
+
+/* ================= reading helpers ================= */
+
+function withLock_(fn) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try { return fn(); } finally { lock.releaseLock(); }
+}
+
+function sheetFor_(tabName) {
+  const ss = SpreadsheetApp.getActive();
+  const direct = tabName ? ss.getSheetByName(tabName) : null;   // fast path: the app always sends the tab name
+  return direct || ss.getSheetByName(pickTab_(findTransactionTabs_(ss), tabName));
+}
+
+function readSummary_(sh) {
+  const summary = [];
+  if (sh.getLastColumn() < CONFIG.SUMMARY_COL + 1) return summary;
+  sh.getRange(1, CONFIG.SUMMARY_COL, Math.min(40, sh.getMaxRows()), 2).getDisplayValues().forEach(function (p) {
+    const k = String(p[0]).trim(), v = String(p[1]).trim();
+    if (k && v && norm_(v) !== 'amount') summary.push([k, v]);
+  });
+  return summary;
+}
+
+function pickTab_(tabs, wanted) {
+  if (wanted && tabs.indexOf(wanted) > -1) return wanted;
+  if (CONFIG.TRANSACTION_TAB && tabs.indexOf(CONFIG.TRANSACTION_TAB) > -1) return CONFIG.TRANSACTION_TAB;
+  return currentMonthTab_(tabs) || tabs[0];
+}
+
+/** RUN from the editor if a tab is missing in the app: shows, for every sheet, whether it counts as a transaction tab and why not. */
+function debugTabs() {
+  const ss = SpreadsheetApp.getActive();
+  gridSheets_(ss).forEach(function (sh) {
+    const n = sh.getName(), lr = sh.getLastRow(), lc = sh.getLastColumn();
+    let why;
+    if (lr < 2 || lc < 4) why = 'SKIPPED – too small (lastRow=' + lr + ', lastCol=' + lc + '; needs row 2 and column D filled)';
+    else {
+      const h = sh.getRange(2, 2, 1, 3).getDisplayValues()[0];
+      why = (norm_(h[0]) === 'date' && norm_(h[2]) === 'description' ? 'OK' : 'SKIPPED – B2="' + h[0] + '", D2="' + h[2] + '" (need Date / Description)');
+    }
+    console.log('"' + n + '": ' + why);
+  });
+  CacheService.getScriptCache().remove('meta_v2');
+  console.log('Tab list cache cleared. Cached/current-month match: "' + currentMonthTab_(findTransactionTabs_(ss)) + '"');
+}
+
+function findTransactionTabs_(ss) {
+  return gridSheets_(ss).filter(function (sh) {
+    if (sh.getLastRow() < 2 || sh.getLastColumn() < 4) return false;
+    const h = sh.getRange(2, 2, 1, 3).getDisplayValues()[0];
+    return norm_(h[0]) === 'date' && norm_(h[2]) === 'description';
+  }).map(function (sh) { return sh.getName(); });
+}
+
+function nextEmptyRow_(sh) {
+  const F = CONFIG.FIRST_DATA_ROW, C = CONFIG.COL;
+  const last = sh.getLastRow();
+  if (last < F) return F;
+  const vals = sh.getRange(F, C.DATE, last - F + 1, C.AMOUNT - C.DATE + 1).getValues();
+  let lastUsed = -1;
+  for (let i = 0; i < vals.length; i++) {
+    const r = vals[i];
+    if (r[0] !== '' || r[C.DESC - C.DATE] !== '' || r[C.AMOUNT - C.DATE] !== '') lastUsed = i;
+  }
+  return F + lastUsed + 1;
+}
+
+function ensureRowExists_(sh, row) {
+  const max = sh.getMaxRows();
+  if (row <= max) return;
+  sh.insertRowsAfter(max, row - max);
+  const cols = sh.getMaxColumns();
+  const src = sh.getRange(max, 1, 1, cols);
+  for (let r = max + 1; r <= row; r++) {
+    const dst = sh.getRange(r, 1, 1, cols);
+    src.copyTo(dst, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+    src.copyTo(dst, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false);
+  }
+}
+
+function readTab_(sh) {
+  const F = CONFIG.FIRST_DATA_ROW, C = CONFIG.COL;
+  const last = sh.getLastRow();
+  const rows = [];
+  if (last >= F) {
+    const vals = sh.getRange(F, 1, last - F + 1, C.REMARKS).getValues();
+    vals.forEach(function (r, i) {
+      const desc = r[C.DESC - 1], amt = r[C.AMOUNT - 1];
+      if (desc === '' && amt === '') return;
+      rows.push({
+        row: F + i,
+        date: toISO_(r[C.DATE - 1]),
+        desc: String(desc),
+        category: String(r[C.CATEGORY - 1]),
+        amount: toNum_(amt),
+        account: String(r[C.ACCOUNT - 1]),
+        group: String(r[C.GROUP - 1]),
+        remarks: String(r[C.REMARKS - 1])
+      });
+    });
+  }
+  return { rows: rows, summary: readSummary_(sh) };
+}
+
+/** Finds the Categories and Accounts tables anywhere in the spreadsheet. */
+function readSetup_(ss) {
+  const out = { categories: [], accounts: [] };
+  gridSheets_(ss).forEach(function (sh) {
+    const lr = sh.getLastRow(), lc = sh.getLastColumn();
+    if (!lr || !lc) return;
+    const v = sh.getRange(1, 1, Math.min(lr, 200), Math.min(lc, 30)).getDisplayValues();
+    for (let r = 0; r < v.length; r++) {
+      for (let c = 0; c < v[r].length; c++) {
+        const cell = norm_(v[r][c]);
+        if (cell === 'category name' && !out.categories.length) {
+          for (let k = r + 1; k < v.length && v[k][c].trim(); k++) {
+            out.categories.push({ name: v[k][c].trim(), group: (v[k][c + 1] || '').trim(), type: (v[k][c + 2] || '').trim() });
+          }
+        }
+        if (cell === 'account name' && !out.accounts.length) {
+          for (let k = r + 1; k < v.length && v[k][c].trim(); k++) {
+            if (norm_(v[k][c]) === 'tags') break;
+            out.accounts.push({ name: v[k][c].trim(), start: (v[k][c + 1] || '').trim() });
+          }
+        }
+      }
+    }
+  });
+  return out;
+}
+
+/** Only normal tabs – skips chart sheets ("OBJECT" sheets) and other non-grid tabs. */
+function gridSheets_(ss) {
+  return ss.getSheets().filter(function (sh) {
+    try { return sh.getType() === SpreadsheetApp.SheetType.GRID; } catch (e) { return false; }
+  });
+}
+
+/* ================= date / value utils ================= */
+
+let TZ_ = null;
+function tz_() { return TZ_ || (TZ_ = SpreadsheetApp.getActive().getSpreadsheetTimeZone()); }
+
+/** Sheets date serial (days since 30 Dec 1899) – independent of any timezone. */
+function isoToSerial_(iso) {
+  const p = iso.split('-').map(Number);
+  return (Date.UTC(p[0], p[1] - 1, p[2]) - Date.UTC(1899, 11, 30)) / 86400000;
+}
+
+function toISO_(v) {
+  if (v instanceof Date && !isNaN(v)) return Utilities.formatDate(v, tz_(), 'yyyy-MM-dd');
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(String(v).trim()); // dd/mm/yyyy text
+  if (m) return m[3] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[1]).slice(-2);
+  return '';
+}
+
+/** Value safe to write back with setValues (dates become serials so timezones can't shift them). */
+function toCell_(v) {
+  if (v instanceof Date && !isNaN(v)) {
+    const day = isoToSerial_(Utilities.formatDate(v, tz_(), 'yyyy-MM-dd'));
+    const t = Utilities.formatDate(v, tz_(), 'HH:mm:ss').split(':').map(Number);
+    return day + (t[0] * 3600 + t[1] * 60 + t[2]) / 86400;
+  }
+  return v;
+}
+
+function toNum_(v) {
+  if (typeof v === 'number') return v;
+  const n = Number(String(v).replace(/[^0-9.\-]/g, ''));
+  return isNaN(n) ? 0 : n;
+}
+
+function norm_(s) { return String(s || '').trim().toLowerCase(); }
