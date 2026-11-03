@@ -772,9 +772,8 @@ function renderHome(animate){
   const spent=sum(exp),todaySpent=sum(exp.filter(r=>r.date===todayISO()));
   const [y,mo]=m.split('-').map(Number),isCur=m===todayISO().slice(0,7),days=isCur?new Date().getDate():new Date(y,mo,0).getDate();
   const leftP=S.summary.find(p=>/money left/i.test(p[0]));
-  // fixed items ticked as paid this month come off "Money left" (and so off "Safe to spend today")
-  const paidFixed=((S.settings.fixedPaid||{})[m])||{},fixedPaidSum=(S.fixed||[]).reduce((a,f)=>a+(paidFixed[f.name]?(+f.amount||0):0),0);
-  const leftV=(leftP?Number(String(leftP[1]).replace(/[^0-9.\-]/g,'')):NaN)-fixedPaidSum;
+  // shown exactly as the sheet's "Total Money Left" (it already subtracts the Fixed Money total)
+  const leftV=leftP?Number(String(leftP[1]).replace(/[^0-9.\-]/g,'')):NaN;
   const showLeft=leftP&&!isNaN(leftV);
   $('balK').textContent=showLeft?'Money left':'Spent in '+monthName(m);
   const target=showLeft?leftV:spent,el=$('balV');
