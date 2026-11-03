@@ -3,7 +3,7 @@
  * Offline / very slow: falls back to the saved copy so the app still opens.
  * Bump VERSION whenever you upload new files.
  */
-const VERSION = 'et-v10';
+const VERSION = 'et-v11';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './config.js', './icon-180.png', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
