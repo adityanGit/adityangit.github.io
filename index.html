@@ -138,7 +138,14 @@ svg{display:block}
 .ed-list{max-height:52vh;overflow-y:auto;margin:0 -4px;padding:0 4px}
 .ed-row{display:flex;align-items:center;gap:8px;padding:6px 0}
 .ed-n{flex:1;font-weight:600;display:flex;align-items:center;gap:8px;font-size:15px}.ed-n svg{width:17px;height:17px}
-.ed-i{width:72px;padding:11px 10px;text-align:center;font-size:16px}.ed-i.wide{width:120px}
+.ed-i{width:72px;padding:11px 10px;text-align:center;font-size:16px}.ed-i.wide{width:120px}.ed-i.name{width:170px;text-align:left}
+.sv{margin-top:14px}
+.sv-h{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px}
+.sv-h b{display:block;font-size:16px}.sv-h small{color:var(--muted);font-size:13px}.sv-h .pct{font-size:22px;font-weight:700;letter-spacing:-.02em}
+.sv-m{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0 12px}
+.sv-m div{background:var(--panel);border-radius:16px;padding:10px 12px}.sv-m small{display:block;color:var(--muted);font-size:12px}.sv-m b{font-size:15px}
+.sv-f{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13px;color:var(--muted)}
+.sv-f button{flex:none;padding:9px 14px;border-radius:999px;background:var(--primary);color:#fff;font-weight:600;font-size:14px}
 .review-banner{display:flex;align-items:center;gap:12px;width:100%;margin-top:14px;padding:12px 14px;border-radius:20px;text-align:left;
   background:color-mix(in srgb,#f59e0b 14%,var(--tile));transition:transform .35s var(--spring)}
 .review-banner:active{transform:scale(.97)}
@@ -459,6 +466,7 @@ body{background:transparent}
   <div class="panel rise d3">
     <button class="search-fake" data-go="hist" data-focus="1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>Search transactions</button>
     <button class="review-banner" id="reviewBanner" data-review="1"></button>
+    <div id="saveCard"></div>
     <div class="sec-h"><h3>Transaction History</h3><button data-go="hist">See all</button></div>
     <div id="recentList"></div>
   </div>
@@ -475,6 +483,7 @@ body{background:transparent}
     <div class="sec-h"><h3>Manage</h3></div>
     <button class="mrow" id="mCards"><span><b>Card bill dates</b><small>Statement and due day for each card</small></span><i>›</i></button>
     <button class="mrow" id="mBud"><span><b>Monthly budgets</b><small id="mBudSub">Limits per category</small></span><i>›</i></button>
+    <button class="mrow" id="mSave"><span><b>Savings goal</b><small id="mSaveSub">Emergency fund and monthly target</small></span><i>›</i></button>
     <button class="mrow" data-review="1" id="mRev"><span><b>Review auto-logged</b><small id="mRevSub">Entries without a category</small></span><i>›</i></button>
   </div>
 </section>
@@ -600,7 +609,7 @@ function iconKey(name){const n=String(name||'').toLowerCase();
 
 const S={tabs:[],tab:'',url:'',cats:[],accs:[],rows:[],summary:[],view:'home',
   kind:'Expense',category:'',account:'',date:todayISO(),split:false,splitN:2,month:'',filter:'',busy:false,edit:null,loading:false,
-  settings:{},fixed:[],cards:[]};
+  settings:{},fixed:[],cards:[],savings:null};
 
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -664,7 +673,7 @@ function enqueue(fn){QN++;syncUI();const p=Q.then(fn);Q=p.catch(()=>{}).then(()=
 function syncUI(){$('refreshBtn').classList.toggle('spin',QN>0||!!S.loading);}
 const CK='et_cache_v1';
 function saveCache(){try{localStorage.setItem(CK,JSON.stringify({tabs:S.tabs,tab:S.tab,url:S.url,cats:S.cats,accs:S.accs,summary:S.summary,
-  settings:S.settings,fixed:S.fixed,cards:S.cards,prev:S.prev,
+  settings:S.settings,fixed:S.fixed,cards:S.cards,prev:S.prev,savings:S.savings,
   rows:S.rows.filter(r=>r.row&&!r.pending).map(r=>({row:r.row,date:r.date,desc:r.saved.desc,category:r.category,amount:r.saved.amount,account:r.account,group:r.group||'',remarks:r.remarks||''}))}));}catch(e){}}
 function fromCache(){try{const c=JSON.parse(localStorage.getItem(CK)||'null');if(!c||!c.rows)return false;
   const want=store.get('ql_tab');if(want&&c.tab!==want)return false;
@@ -672,7 +681,7 @@ function fromCache(){try{const c=JSON.parse(localStorage.getItem(CK)||'null');if
 function applyMeta(b){
   S.tabs=b.tabs||[];S.tab=b.tab;S.url=b.url;
   if(b.settings)S.settings=b.settings;S.settings=S.settings||{};
-  if(b.fixed)S.fixed=b.fixed;if(b.prev!==undefined)S.prev=b.prev;if(b.cards)S.cards=b.cards;S.fixed=S.fixed||[];S.cards=S.cards||[];
+  if(b.fixed)S.fixed=b.fixed;if(b.prev!==undefined)S.prev=b.prev;if(b.cards)S.cards=b.cards;if(b.savings!==undefined)S.savings=b.savings;S.fixed=S.fixed||[];S.cards=S.cards||[];
   const cats=b.cats||(b.setup&&b.setup.categories),accs=b.accs||(b.setup&&b.setup.accounts);
   S.cats=cats&&cats.length?cats:DEFAULT_CATS;S.accs=accs&&accs.length?accs:DEFAULT_ACCS;
   $('tabSel').innerHTML=S.tabs.map(t=>`<option ${t===S.tab?'selected':''}>${esc(t)}</option>`).join('');
@@ -793,7 +802,7 @@ function renderHome(animate){
       <div><div class="row" style="opacity:.7">Today</div><div class="big num">${money(todaySpent)}</div></div>
       <div class="row"><span>Avg ${inr0(spent/Math.max(1,days))}/day · ${exp.length} entries</span><span class="tag">INR</span></div>`;
   }
-  renderBills();
+  renderBills();renderSavings();
   const nr=S.rows.filter(needsReview).length;
   $('reviewBanner').style.display=nr?'':'none';
   $('reviewBanner').innerHTML=`<span class="rb-ic">!</span><span class="rb-t"><b>${nr} auto-logged ${nr>1?'entries need':'entry needs'} a category</b><br><span>Tap to review</span></span><span class="rb-go">›</span>`;
@@ -828,12 +837,15 @@ document.addEventListener('click',e=>{
   if(e.target.closest('#editCards,#addCards'))openCardEditor();
   if(e.target.closest('#editBudgets,#addBudgets,#mBud'))openBudgetEditor();
   if(e.target.closest('#mCards'))openCardEditor();
+  if(e.target.closest('#mSave,#editSavings,#addSavings'))openSavingsEditor();
+  if(e.target.closest('#logSavings'))logSavings();
 });
 function saveSettingsPatch(patch,reload){
   // apply locally first so it feels instant
   const s=S.settings=S.settings||{};
   if(patch.fixedPaid)Object.keys(patch.fixedPaid).forEach(m=>{s.fixedPaid=s.fixedPaid||{};s.fixedPaid[m]=Object.assign({},s.fixedPaid[m],patch.fixedPaid[m]);});
   if(patch.budgets){s.budgets=Object.assign({},s.budgets);Object.keys(patch.budgets).forEach(k=>{const v=Math.round(+patch.budgets[k]);if(v>0)s.budgets[k]=v;else delete s.budgets[k];});}
+  if(patch.savings){if(+patch.savings.goal>0)s.savings=Object.assign({},s.savings,patch.savings);else delete s.savings;}
   if(patch.cards){s.cards=Object.assign({},s.cards);Object.keys(patch.cards).forEach(k=>{const c=patch.cards[k];if(c&&c.stmt&&c.due)s.cards[k]=c;else delete s.cards[k];});}
   renderHome();renderStats();
   enqueue(async()=>{S.settings=await call('saveSettings',patch);renderHome();renderStats();})
@@ -869,6 +881,63 @@ function openBudgetEditor(){
     const patch={};document.querySelectorAll('[data-budget]').forEach(i=>{patch[i.dataset.budget]=+(i.value.replace(/[^0-9.]/g,''))||0;});
     closeSheet();toast('Budgets saved');saveSettingsPatch({budgets:patch});
   };
+  showSheet();
+}
+/* ---------- SAVINGS GOAL ---------- */
+// a saving = a Transfer described "Savings" / "Emergency fund", or any entry in a category named like "Savings" (same rule as the server)
+const isSaving=r=>/saving/i.test(r.category)||(typeOf(r.category)==='Transfer'&&/saving|emergency/i.test(r.desc));
+const ymPlus=(ym,k)=>{const[y,m]=ym.split('-').map(Number);const d=new Date(y,m-1+k,1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');};
+function savingsState(){
+  const g=S.settings&&S.settings.savings;if(!g)return null;
+  const ym=todayISO().slice(0,7),srv=(S.savings&&S.savings.month===ym)?S.savings:{prior:0,thisMonth:0};
+  // this month's tab is loaded → count live (includes entries not synced yet); otherwise use the server's figure
+  const live=S.rows.some(r=>r.date.slice(0,7)===ym),thisMonth=live?sum(S.rows.filter(r=>r.date.slice(0,7)===ym&&isSaving(r))):srv.thisMonth;
+  const total=(+g.start||0)+(srv.prior||0)+thisMonth,remaining=Math.max(0,g.goal-total);
+  const salaryP=S.summary.find(p=>/starting amount|salary/i.test(p[0])),salary=salaryP?Number(String(salaryP[1]).replace(/[^0-9.\-]/g,''))||0:0;
+  const invest=(S.fixed||[]).filter(f=>/invest/i.test(f.name)).reduce((a,f)=>a+(+f.amount||0),0);
+  // goal month: one target-sized saving per month, starting this month if this month's target isn't met yet
+  let eta='';if(remaining>0&&g.target>0){const n=Math.ceil(remaining/g.target);eta=ymPlus(ym,thisMonth>=g.target?n:n-1);}
+  return {g,ym,thisMonth,total,remaining,salary,invest,eta,
+    rate:salary?(invest+thisMonth)/salary:0,targetRate:salary?(invest+(+g.target||0))/salary:0};
+}
+function renderSavings(){
+  const st=savingsState();
+  $('mSaveSub').textContent=st?inr0(st.total)+' of '+inr0(st.g.goal)+' saved':'Emergency fund and monthly target';
+  if(!st){$('saveCard').innerHTML=`<button class="tile sv" id="addSavings" style="width:100%;text-align:left;display:flex;gap:12px;align-items:center">
+    <span class="ico" style="background:var(--tile2)">${svg('brief')}</span><span style="flex:1"><b>Set a savings goal</b><br><span style="color:var(--muted);font-size:13px">Track your emergency fund and monthly savings</span></span><span style="color:var(--muted)">›</span></button>`;return;}
+  const {g,thisMonth,total,remaining,salary,eta,rate,targetRate}=st,pct=Math.min(100,total/g.goal*100),mPct=g.target?Math.min(100,thisMonth/g.target*100):0;
+  const foot=!remaining?'Goal reached 🎉':eta?`At ${inr0(g.target)}/month: goal by <b style="color:var(--text)">${monthName(eta)}</b>`:'Set a monthly target to see when you\'ll get there';
+  $('saveCard').innerHTML=`<div class="tile sv">
+    <div class="sv-h"><span><b>${esc(g.name)}</b><small class="num">${inr0(total)} of ${inr0(g.goal)}${remaining?' · '+inr0(remaining)+' to go':''}</small></span>
+      <button id="editSavings" class="pct num" aria-label="Edit savings goal">${Math.round(pct)}%</button></div>
+    <div class="bar"><i style="width:${pct}%"></i></div>
+    <div class="sv-m">
+      <div><small>Saved this month</small><b class="num" style="${g.target&&thisMonth>=g.target?'color:var(--green)':''}">${inr0(thisMonth)}</b>${g.target?` <small style="display:inline">/ ${inr0(g.target)}</small><div class="bar" style="margin-top:6px;height:5px;padding:0;background:var(--tile2)"><i style="width:${mPct}%"></i></div>`:''}</div>
+      <div><small>Savings rate</small><b class="num" style="${salary&&rate>=targetRate?'color:var(--green)':''}">${salary?Math.round(rate*100)+'%':'—'}</b>${salary?` <small style="display:inline">target ${Math.round(targetRate*100)}%</small><small>investments + savings</small>`:'<small>add Starting Amount to the sheet</small>'}</div>
+    </div>
+    <div class="sv-f"><span>${foot}</span><button id="logSavings">+ Log savings</button></div></div>`;
+}
+function logSavings(){
+  const st=savingsState(),cat=S.cats.find(c=>/saving/i.test(c.name));
+  openAdd(cat?typeOf(cat.name):'Transfer');if(cat)S.category=cat.name;renderAdd();
+  $('desc').value='Savings';
+  const left=st&&st.g.target?Math.max(0,st.g.target-st.thisMonth):0;$('amount').value=left?String(Math.round(left)):'';updateShare();
+}
+function openSavingsEditor(){
+  const g=(S.settings&&S.settings.savings)||{name:'Emergency fund',goal:150000,start:0,target:15044},has=!!(S.settings&&S.settings.savings);
+  const row=(label,k,v,cls)=>`<div class="ed-row"><span class="ed-n">${label}</span><input class="field ed-i ${cls||'wide'}" ${cls?'':'inputmode="numeric"'} data-sv="${k}" value="${esc(v)}"></div>`;
+  $('sheetPanel').innerHTML=`<div class="grab"></div><div class="ttl">Savings goal</div>
+    <div class="meta">Log each saving as a <b>Transfer</b> with the description <b>Savings</b> (or use a "Savings" category). It counts toward this goal.</div>
+    <div class="ed-list">${row('Goal name','name',g.name,'name')}${row('Goal amount','goal',g.goal||'')}${row('Already saved','start',g.start||'')}${row('Save each month','target',g.target||'')}</div>
+    <div class="acts" style="margin-top:14px">${has?'<button class="sb" id="delSavings">Remove goal</button>':''}<button class="sb dark" id="saveSavings">Save</button></div>`;
+  const v=k=>document.querySelector(`[data-sv="${k}"]`).value;
+  const n=k=>Math.round(+(v(k).replace(/[^0-9.]/g,''))||0);
+  $('saveSavings').onclick=()=>{
+    if(!(n('goal')>0)){toast('Enter a goal amount',true);return;}
+    const since=(S.settings.savings&&S.settings.savings.since)||todayISO().slice(0,7);
+    closeSheet();toast('Savings goal saved');saveSettingsPatch({savings:{name:v('name').trim()||'Emergency fund',goal:n('goal'),start:n('start'),target:n('target'),since}},true);
+  };
+  if(has)$('delSavings').onclick=()=>{closeSheet();toast('Savings goal removed');saveSettingsPatch({savings:{goal:0}},true);};
   showSheet();
 }
 function renderBudgets(exp){
